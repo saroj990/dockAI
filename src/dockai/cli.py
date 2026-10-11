@@ -1,10 +1,10 @@
-"""Typer CLI — Phase 1 tools + Phase 2 natural-language ask."""
+"""Typer CLI — read tools, NL ask/chat, and confirmed lifecycle ops."""
 
 from __future__ import annotations
 
 import sys
 import time
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 
@@ -24,11 +24,14 @@ from dockai.formatting import (
 )
 from dockai.llm.ollama import OllamaProvider
 from dockai.tools import (
+    apply_action,
     get_container_logs,
     inspect_container,
     list_containers,
+    propose_action,
     search_containers,
 )
+from dockai.tools.lifecycle import Action
 
 app = typer.Typer(
     name="dockai",
@@ -37,7 +40,18 @@ app = typer.Typer(
 )
 
 _SUBCOMMANDS = frozenset(
-    {"ask", "chat", "containers", "inspect", "logs", "search", "uptime"}
+    {
+        "ask",
+        "chat",
+        "containers",
+        "inspect",
+        "logs",
+        "search",
+        "uptime",
+        "start",
+        "stop",
+        "restart",
+    }
 )
 
 
@@ -62,6 +76,29 @@ def _handle(exc: Exception) -> None:
     raise typer.Exit(code=1) from exc
 
 
+def _print_pending(pending: dict[str, Any]) -> None:
+    container = pending.get("container") or {}
+    console.print(pending.get("message", "Confirmation required."))
+    console.print(f"[bold]Impact:[/bold] {pending.get('impact', '')}")
+    console.print(
+        f"[bold]Target:[/bold] {container.get('name')} "
+        f"({container.get('id')}) — status: {container.get('status')}"
+    )
+
+
+def _confirm_and_apply(client: Any, pending: dict[str, Any]) -> None:
+    """Ask the user, then apply in-app (LLM cannot bypass this)."""
+    _print_pending(pending)
+    if not typer.confirm("Proceed with this change?", default=False):
+        console.print("[yellow]Cancelled — no changes made.[/yellow]")
+        return
+    action: Action = pending["action"]
+    target = pending["target"]
+    with busy_status(f"Applying {action} — please wait…"):
+        outcome = apply_action(client, action, target)
+    console.print(f"[green]{outcome['message']}[/green]")
+
+
 def _run_ask(prompt: str, *, model: str | None = None) -> None:
     llm = OllamaProvider(model=model)
     try:
@@ -76,10 +113,23 @@ def _run_ask(prompt: str, *, model: str | None = None) -> None:
             )
         console.print(result.answer)
         print_elapsed(time.perf_counter() - started)
+        if result.pending_action:
+            _confirm_and_apply(client, result.pending_action)
     except Exception as exc:  # noqa: BLE001
         _handle(exc)
     finally:
         llm.close()
+
+
+def _lifecycle_cmd(action: Action, target: str) -> None:
+    try:
+        started = time.perf_counter()
+        client = get_client()
+        pending = propose_action(client, action, target)
+        _confirm_and_apply(client, pending)
+        print_elapsed(time.perf_counter() - started)
+    except Exception as exc:  # noqa: BLE001
+        _handle(exc)
 
 
 @app.callback()
@@ -147,6 +197,8 @@ def chat_cmd(
                     )
                 console.print(f"[bold]Agent:[/bold] {result.answer}")
                 print_elapsed(time.perf_counter() - started)
+                if result.pending_action:
+                    _confirm_and_apply(client, result.pending_action)
                 if session.focus_container:
                     console.print(
                         f"[dim]Focused: {session.focus_container}[/dim]"
@@ -260,6 +312,30 @@ def uptime_cmd(
         )
     except Exception as exc:  # noqa: BLE001
         _handle(exc)
+
+
+@app.command("start")
+def start_cmd(
+    target: str = typer.Argument(..., help="Container name or ID."),
+) -> None:
+    """Start a container after explicit confirmation."""
+    _lifecycle_cmd("start", target)
+
+
+@app.command("stop")
+def stop_cmd(
+    target: str = typer.Argument(..., help="Container name or ID."),
+) -> None:
+    """Stop a container after explicit confirmation."""
+    _lifecycle_cmd("stop", target)
+
+
+@app.command("restart")
+def restart_cmd(
+    target: str = typer.Argument(..., help="Container name or ID."),
+) -> None:
+    """Restart a container after explicit confirmation."""
+    _lifecycle_cmd("restart", target)
 
 
 def main_cli() -> None:

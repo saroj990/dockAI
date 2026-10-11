@@ -15,6 +15,11 @@ from dockai.tools.containers import (
     list_containers,
     search_containers,
 )
+from dockai.tools.lifecycle import Action, propose_action
+
+MUTATING_TOOLS = frozenset(
+    {"start_container", "stop_container", "restart_container"}
+)
 
 
 @dataclass(frozen=True)
@@ -179,7 +184,42 @@ def build_registry() -> dict[str, ToolSpec]:
                 )
             },
         ),
+        **_mutation_specs(),
     }
+
+
+def _mutation_specs() -> dict[str, ToolSpec]:
+    """Mutating tools only propose; the CLI applies after user confirmation."""
+
+    def _handler(action: Action) -> Callable[..., Any]:
+        return lambda client, **a: propose_action(
+            client, action, _require_str(a, "target")
+        )
+
+    specs: dict[str, ToolSpec] = {}
+    for action in ("start", "stop", "restart"):
+        name = f"{action}_container"
+        specs[name] = ToolSpec(
+            name=name,
+            description=(
+                f"Propose to {action} a container. Does not change state until the "
+                "user confirms in the CLI. Always call this for user requests to "
+                f"{action} a container."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Container name or ID.",
+                    }
+                },
+                "required": ["target"],
+                "additionalProperties": False,
+            },
+            handler=_handler(action),  # type: ignore[arg-type]
+        )
+    return specs
 
 
 def ollama_tool_schemas(registry: dict[str, ToolSpec]) -> list[dict[str, Any]]:

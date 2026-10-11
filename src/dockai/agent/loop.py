@@ -29,6 +29,9 @@ For uptime questions, call list_uptime.
 Default log window is the last 100 lines unless the user asks otherwise.
 For follow-ups like "that container" or "its logs", use the session focused container
 only when the context marks exactly one. If unclear, ask which container.
+To start, stop, or restart a container, call start_container / stop_container /
+restart_container. Those tools only propose the change; the CLI asks the user to
+confirm before anything runs. Never claim you already stopped or started a container.
 """
 
 _NUDGE = (
@@ -50,6 +53,7 @@ class AgentResult:
     turns: int = 0
     messages: list[ChatMessage] = field(default_factory=list)
     focus_container: str | None = None
+    pending_action: dict[str, Any] | None = None
 
 
 def _looks_like_tool_dump(text: str) -> bool:
@@ -86,8 +90,13 @@ def _names_from_tool_results(collected: list[dict[str, Any]]) -> list[str]:
         if isinstance(data, dict):
             if isinstance(data.get("container"), str):
                 names.append(data["container"])
+            nested = data.get("container")
+            if isinstance(nested, dict) and isinstance(nested.get("name"), str):
+                names.append(nested["name"])
             if isinstance(data.get("name"), str) and "matches" not in data:
                 names.append(data["name"])
+            if isinstance(data.get("target"), str) and data.get("needs_confirmation"):
+                names.append(data["target"])
             matches = data.get("matches")
             if isinstance(matches, list):
                 for match in matches:
@@ -122,6 +131,26 @@ def _next_focus(
     if len(names) > 1:
         return None
     return previous
+
+
+def _pending_from_results(collected: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for item in reversed(collected):
+        result = item.get("result") or {}
+        data = result.get("data")
+        if result.get("ok") and isinstance(data, dict) and data.get("needs_confirmation"):
+            return data
+    return None
+
+
+def _format_pending(pending: dict[str, Any]) -> str:
+    container = pending.get("container") or {}
+    return (
+        f"{pending.get('message', 'Confirmation required.')}\n"
+        f"Impact: {pending.get('impact', '')}\n"
+        f"Name: {container.get('name')} | ID: {container.get('id')} | "
+        f"Status: {container.get('status')}\n"
+        "Confirm in the prompt to proceed (nothing has been changed yet)."
+    )
 
 
 def _with_focus(user_text: str, focus: str | None) -> str:
@@ -164,12 +193,14 @@ def run_agent(
     collected: list[dict[str, Any]] = []
 
     def _finish(answer: str, turns: int) -> AgentResult:
+        pending = _pending_from_results(collected)
         return AgentResult(
             answer=answer,
             tool_results=collected,
             turns=turns,
             messages=messages,
             focus_container=_next_focus(collected, focus_container),
+            pending_action=pending,
         )
 
     for turn in range(1, max_turns + 1):
@@ -192,6 +223,11 @@ def run_agent(
                         content=json.dumps(result, default=str),
                     )
                 )
+            # Skip a second LLM hop for mutation proposals (faster + safer).
+            pending = _pending_from_results(collected)
+            if pending is not None:
+                progress("Waiting for your confirmation…")
+                return _finish(_format_pending(pending), turn)
             continue
 
         answer = (assistant.content or "").strip()
