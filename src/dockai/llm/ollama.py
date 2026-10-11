@@ -3,26 +3,18 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 from uuid import uuid4
 
 import httpx
 
+from dockai.config import Settings, load_settings
 from dockai.errors import DockaiError
 from dockai.llm.base import ChatMessage, ToolCall
 
 
 class OllamaError(DockaiError):
     """Ollama request failed or returned an unusable response."""
-
-
-def _default_timeout() -> float:
-    raw = os.getenv("DOCKAI_OLLAMA_TIMEOUT", "120")
-    try:
-        return max(1.0, float(raw))
-    except ValueError:
-        return 120.0
 
 
 class OllamaProvider:
@@ -33,10 +25,12 @@ class OllamaProvider:
         model: str | None = None,
         timeout: float | None = None,
         client: httpx.Client | None = None,
+        settings: Settings | None = None,
     ) -> None:
-        self.host = (host or os.getenv("OLLAMA_HOST") or "http://127.0.0.1:11434").rstrip("/")
-        self.model = model or os.getenv("DOCKAI_MODEL") or "llama3.1:8b"
-        resolved = _default_timeout() if timeout is None else timeout
+        cfg = settings or load_settings(model=model)
+        self.host = (host or cfg.ollama_host).rstrip("/")
+        self.model = model or cfg.ollama_model
+        resolved = cfg.ollama_timeout if timeout is None else timeout
         self._client = client or httpx.Client(base_url=self.host, timeout=resolved)
         self._owns_client = client is None
 

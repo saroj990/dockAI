@@ -18,12 +18,30 @@ Requirements:
 
 ```bash
 ollama pull llama3.1:8b
-export DOCKAI_MODEL=llama3.1:8b          # optional
-export OLLAMA_HOST=http://127.0.0.1:11434 # optional
-export DOCKAI_DOCKER_TIMEOUT=60          # seconds, optional
-export DOCKAI_OLLAMA_TIMEOUT=120         # seconds, optional
-export DOCKAI_DEBUG=1                    # or use --verbose
 ```
+
+### Configuration
+
+Copy the example config, then edit host/model as needed:
+
+```bash
+cp dockai.example.toml dockai.toml
+# or: mkdir -p ~/.config/dockai && cp dockai.example.toml ~/.config/dockai/config.toml
+dockai config          # show resolved settings
+```
+
+Search order: `DOCKAI_CONFIG` → `./dockai.toml` → `~/.config/dockai/config.toml`.
+
+Precedence: **CLI flags > environment variables > config file > defaults**.
+
+| Setting | Config key | Env | CLI |
+|---------|------------|-----|-----|
+| Ollama host | `[ollama] host` | `OLLAMA_HOST` | — |
+| Model | `[ollama] model` | `DOCKAI_MODEL` | `--model` |
+| Ollama timeout | `[ollama] timeout` | `DOCKAI_OLLAMA_TIMEOUT` | — |
+| Docker timeout | `[docker] timeout` | `DOCKAI_DOCKER_TIMEOUT` | — |
+| Verbose logs | `[diagnostics] verbose` | `DOCKAI_DEBUG` | `-v` / `--verbose` |
+| Config path | — | `DOCKAI_CONFIG` | `--config` |
 
 ## Quick examples
 

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import sys
 import time
+from dataclasses import replace
 from typing import Any, Optional
 
 import typer
 
 from dockai import __version__
 from dockai.agent import ChatSession, run_agent
+from dockai.config import Settings, load_settings
 from dockai.diagnostics import configure_diagnostics
 from dockai.docker_client import get_client
 from dockai.errors import AmbiguousContainerError, DockaiError
@@ -44,6 +46,7 @@ _SUBCOMMANDS = frozenset(
     {
         "ask",
         "chat",
+        "config",
         "containers",
         "inspect",
         "logs",
@@ -100,12 +103,22 @@ def _confirm_and_apply(client: Any, pending: dict[str, Any]) -> None:
     console.print(f"[green]{outcome['message']}[/green]")
 
 
-def _run_ask(prompt: str, *, model: str | None = None) -> None:
-    llm = OllamaProvider(model=model)
+def _ctx_settings(ctx: typer.Context) -> Settings:
+    return ctx.ensure_object(dict).setdefault("settings", load_settings())
+
+
+def _run_ask(
+    prompt: str,
+    *,
+    settings: Settings,
+    model: str | None = None,
+) -> None:
+    cfg = replace(settings, ollama_model=model or settings.ollama_model)
+    llm = OllamaProvider(settings=cfg, model=model)
     try:
         started = time.perf_counter()
         with busy_status("Working on it — fetching results, please wait…") as status:
-            client = get_client()
+            client = get_client(settings=cfg)
             result = run_agent(
                 prompt,
                 llm=llm,
@@ -122,10 +135,15 @@ def _run_ask(prompt: str, *, model: str | None = None) -> None:
         llm.close()
 
 
-def _lifecycle_cmd(action: Action, target: str) -> None:
+def _lifecycle_cmd(
+    action: Action,
+    target: str,
+    *,
+    settings: Settings,
+) -> None:
     try:
         started = time.perf_counter()
-        client = get_client()
+        client = get_client(settings=settings)
         pending = propose_action(client, action, target)
         _confirm_and_apply(client, pending)
         print_elapsed(time.perf_counter() - started)
@@ -135,6 +153,7 @@ def _lifecycle_cmd(action: Action, target: str) -> None:
 
 @app.callback()
 def main(
+    ctx: typer.Context,
     version: bool = typer.Option(
         False,
         "--version",
@@ -148,36 +167,67 @@ def main(
         "-v",
         help="Enable diagnostic logs (tool calls/errors). Same as DOCKAI_DEBUG=1.",
     ),
+    config: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Path to dockai.toml (default: ./dockai.toml or ~/.config/dockai/config.toml).",
+    ),
 ) -> None:
     """dockai CLI."""
-    configure_diagnostics(verbose=verbose)
+    ctx.ensure_object(dict)
+    try:
+        settings = load_settings(config_path=config)
+    except FileNotFoundError as exc:
+        print_error(str(exc))
+        raise typer.Exit(code=1) from exc
+    if verbose:
+        settings = replace(settings, verbose=True)
+    configure_diagnostics(verbose=settings.verbose)
+    ctx.obj["settings"] = settings
+
+
+@app.command("config")
+def config_cmd(ctx: typer.Context) -> None:
+    """Show the resolved configuration (file, env, and defaults)."""
+    settings = _ctx_settings(ctx)
+    source = str(settings.config_path) if settings.config_path else "(none — using defaults/env)"
+    console.print(f"[bold]Config file:[/bold] {source}")
+    console.print(f"[bold]ollama.host:[/bold] {settings.ollama_host}")
+    console.print(f"[bold]ollama.model:[/bold] {settings.ollama_model}")
+    console.print(f"[bold]ollama.timeout:[/bold] {settings.ollama_timeout}")
+    console.print(f"[bold]docker.timeout:[/bold] {settings.docker_timeout}")
+    console.print(f"[bold]diagnostics.verbose:[/bold] {settings.verbose}")
 
 
 @app.command("ask")
 def ask_cmd(
+    ctx: typer.Context,
     prompt: str = typer.Argument(..., help="Natural-language Docker request."),
     model: Optional[str] = typer.Option(
         None,
         "--model",
-        help="Ollama model name (default: DOCKAI_MODEL or llama3.1:8b).",
+        help="Ollama model name (overrides config / DOCKAI_MODEL).",
     ),
 ) -> None:
     """Ask in natural language via Ollama tool calling."""
-    _run_ask(prompt, model=model)
+    _run_ask(prompt, settings=_ctx_settings(ctx), model=model)
 
 
 @app.command("chat")
 def chat_cmd(
+    ctx: typer.Context,
     model: Optional[str] = typer.Option(
         None,
         "--model",
-        help="Ollama model name (default: DOCKAI_MODEL or llama3.1:8b).",
+        help="Ollama model name (overrides config / DOCKAI_MODEL).",
     ),
 ) -> None:
     """Interactive chat with follow-ups in one session."""
-    llm = OllamaProvider(model=model)
+    settings = _ctx_settings(ctx)
+    cfg = replace(settings, ollama_model=model or settings.ollama_model)
+    llm = OllamaProvider(settings=cfg, model=model)
     try:
-        client = get_client()
+        client = get_client(settings=cfg)
         session = ChatSession(llm=llm, client=client)
         console.print(
             "[bold]dockai chat[/bold] — follow-ups stay in this session. "
@@ -221,6 +271,7 @@ def chat_cmd(
 
 @app.command("containers")
 def containers_cmd(
+    ctx: typer.Context,
     all_containers: bool = typer.Option(
         False,
         "--all",
@@ -230,7 +281,7 @@ def containers_cmd(
 ) -> None:
     """List containers (running by default)."""
     try:
-        client = get_client()
+        client = get_client(settings=_ctx_settings(ctx))
         items = list_containers(client, all_containers=all_containers)
         title = "All containers" if all_containers else "Running containers"
         print_containers(
@@ -245,11 +296,12 @@ def containers_cmd(
 
 @app.command("inspect")
 def inspect_cmd(
+    ctx: typer.Context,
     target: str = typer.Argument(..., help="Container name or ID."),
 ) -> None:
     """Inspect a container's state and useful metadata."""
     try:
-        client = get_client()
+        client = get_client(settings=_ctx_settings(ctx))
         print_inspect(inspect_container(client, target))
     except Exception as exc:  # noqa: BLE001
         _handle(exc)
@@ -257,6 +309,7 @@ def inspect_cmd(
 
 @app.command("logs")
 def logs_cmd(
+    ctx: typer.Context,
     target: str = typer.Argument(..., help="Container name or ID."),
     tail: Optional[int] = typer.Option(
         None,
@@ -275,7 +328,7 @@ def logs_cmd(
         if full and tail is not None:
             print_error("Use either --full or --tail, not both.")
             raise typer.Exit(code=1)
-        client = get_client()
+        client = get_client(settings=_ctx_settings(ctx))
         result = get_container_logs(client, target, tail=tail, full=full)
         print_logs(result)
     except Exception as exc:  # noqa: BLE001
@@ -284,6 +337,7 @@ def logs_cmd(
 
 @app.command("search")
 def search_cmd(
+    ctx: typer.Context,
     keyword: str = typer.Argument(..., help="Case-insensitive name keyword."),
     running_only: bool = typer.Option(
         False,
@@ -293,7 +347,7 @@ def search_cmd(
 ) -> None:
     """Find containers by name keyword."""
     try:
-        client = get_client()
+        client = get_client(settings=_ctx_settings(ctx))
         print_search(search_containers(client, keyword, running_only=running_only))
     except Exception as exc:  # noqa: BLE001
         _handle(exc)
@@ -301,6 +355,7 @@ def search_cmd(
 
 @app.command("uptime")
 def uptime_cmd(
+    ctx: typer.Context,
     all_containers: bool = typer.Option(
         False,
         "--all",
@@ -310,7 +365,7 @@ def uptime_cmd(
 ) -> None:
     """Show uptime for running containers (and state for stopped ones with --all)."""
     try:
-        client = get_client()
+        client = get_client(settings=_ctx_settings(ctx))
         items = list_containers(client, all_containers=all_containers)
         print_containers(
             items,
@@ -324,26 +379,29 @@ def uptime_cmd(
 
 @app.command("start")
 def start_cmd(
+    ctx: typer.Context,
     target: str = typer.Argument(..., help="Container name or ID."),
 ) -> None:
     """Start a container after explicit confirmation."""
-    _lifecycle_cmd("start", target)
+    _lifecycle_cmd("start", target, settings=_ctx_settings(ctx))
 
 
 @app.command("stop")
 def stop_cmd(
+    ctx: typer.Context,
     target: str = typer.Argument(..., help="Container name or ID."),
 ) -> None:
     """Stop a container after explicit confirmation."""
-    _lifecycle_cmd("stop", target)
+    _lifecycle_cmd("stop", target, settings=_ctx_settings(ctx))
 
 
 @app.command("restart")
 def restart_cmd(
+    ctx: typer.Context,
     target: str = typer.Argument(..., help="Container name or ID."),
 ) -> None:
     """Restart a container after explicit confirmation."""
-    _lifecycle_cmd("restart", target)
+    _lifecycle_cmd("restart", target, settings=_ctx_settings(ctx))
 
 
 def main_cli() -> None:
