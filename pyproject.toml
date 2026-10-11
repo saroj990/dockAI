@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dockai"
+version = "0.1.0"
+description = "Natural-language Docker CLI agent (Phase 1: Docker foundation)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.12",
+    "rich>=13.7",
+    "docker>=7.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+dockai = "dockai.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dockai"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/dockai", "tests", "README.md", "pyproject.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
