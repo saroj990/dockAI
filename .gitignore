@@ -9,3 +9,4 @@ dist/
 build/
 .env
 .DS_Store
+docker_ai_agent_context_and_scope*
