@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Optional
 
 import typer
@@ -29,8 +30,11 @@ from dockai.tools import (
 app = typer.Typer(
     name="dockai",
     help="Natural-language Docker agent.",
-    no_args_is_help=False,
-    invoke_without_command=True,
+    no_args_is_help=True,
+)
+
+_SUBCOMMANDS = frozenset(
+    {"ask", "containers", "inspect", "logs", "search", "uptime"}
 )
 
 
@@ -69,16 +73,6 @@ def _run_ask(prompt: str, *, model: str | None = None) -> None:
 
 @app.callback()
 def main(
-    ctx: typer.Context,
-    prompt: Optional[str] = typer.Argument(
-        None,
-        help="Natural-language request (Phase 2). Example: dockai \"show running containers\"",
-    ),
-    model: Optional[str] = typer.Option(
-        None,
-        "--model",
-        help="Ollama model name (default: DOCKAI_MODEL or llama3.1).",
-    ),
     version: bool = typer.Option(
         False,
         "--version",
@@ -88,12 +82,6 @@ def main(
     ),
 ) -> None:
     """dockai CLI."""
-    if ctx.invoked_subcommand is not None:
-        return
-    if prompt:
-        _run_ask(prompt, model=model)
-        return
-    typer.echo(ctx.get_help())
 
 
 @app.command("ask")
@@ -102,7 +90,7 @@ def ask_cmd(
     model: Optional[str] = typer.Option(
         None,
         "--model",
-        help="Ollama model name (default: DOCKAI_MODEL or llama3.1).",
+        help="Ollama model name (default: DOCKAI_MODEL or llama3.1:8b).",
     ),
 ) -> None:
     """Ask in natural language via Ollama tool calling."""
@@ -210,3 +198,13 @@ def uptime_cmd(
         )
     except Exception as exc:  # noqa: BLE001
         _handle(exc)
+
+
+def main_cli() -> None:
+    """Entry point: bare prompts become `ask` without breaking subcommands."""
+    args = sys.argv[1:]
+    if args:
+        first = args[0]
+        if first not in _SUBCOMMANDS and not first.startswith("-"):
+            sys.argv.insert(1, "ask")
+    app()

@@ -13,8 +13,8 @@ pip install -e ".[dev]"
 Needs Docker Engine access. Phase 2 also needs [Ollama](https://ollama.com) with a tool-capable model:
 
 ```bash
-ollama pull llama3.1
-# optional: export DOCKAI_MODEL=llama3.1
+ollama pull llama3.1:8b
+# optional: export DOCKAI_MODEL=llama3.1:8b
 # optional: export OLLAMA_HOST=http://127.0.0.1:11434
 ```
 

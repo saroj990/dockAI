@@ -21,7 +21,7 @@ dev = [
 ]
 
 [project.scripts]
-dockai = "dockai.cli:app"
+dockai = "dockai.cli:main_cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dockai"]

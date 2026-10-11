@@ -27,7 +27,7 @@ class OllamaProvider:
         client: httpx.Client | None = None,
     ) -> None:
         self.host = (host or os.getenv("OLLAMA_HOST") or "http://127.0.0.1:11434").rstrip("/")
-        self.model = model or os.getenv("DOCKAI_MODEL") or "llama3.1"
+        self.model = model or os.getenv("DOCKAI_MODEL") or "llama3.1:8b"
         self._client = client or httpx.Client(base_url=self.host, timeout=timeout)
         self._owns_client = client is None
 
