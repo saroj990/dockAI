@@ -7,12 +7,14 @@ from typing import Any, Callable
 
 import docker
 
+from dockai.diagnostics import log_tool_call, log_tool_result
 from dockai.errors import DockaiError
 from dockai.tools.containers import (
     DEFAULT_LOG_TAIL,
     get_container_logs,
     inspect_container,
     list_containers,
+    restarting_containers,
     search_containers,
 )
 from dockai.tools.lifecycle import Action, propose_action
@@ -184,6 +186,21 @@ def build_registry() -> dict[str, ToolSpec]:
                 )
             },
         ),
+        "list_restarting_containers": ToolSpec(
+            name="list_restarting_containers",
+            description=(
+                "List containers that are restarting or have a non-zero restart count. "
+                "Use for troubleshooting restart loops, then inspect and fetch logs."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+            handler=lambda client, **_a: {
+                "containers": restarting_containers(client)
+            },
+        ),
         **_mutation_specs(),
     }
 
@@ -243,28 +260,41 @@ def execute_tool(
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
     """Validate and run a tool. Never invent Docker facts on failure."""
+    log_tool_call(name, arguments)
     if "__invalid__" in arguments:
-        return {
+        result = {
             "ok": False,
             "error": "Invalid tool arguments: could not parse JSON object.",
         }
+        log_tool_result(name, result)
+        return result
     spec = registry.get(name)
     if spec is None:
-        return {"ok": False, "error": f"Unknown tool '{name}'. Allowed: {sorted(registry)}"}
+        result = {"ok": False, "error": f"Unknown tool '{name}'. Allowed: {sorted(registry)}"}
+        log_tool_result(name, result)
+        return result
     unknown = set(arguments) - set(spec.parameters.get("properties", {}))
     if unknown:
-        return {"ok": False, "error": f"Unexpected arguments: {sorted(unknown)}"}
+        result = {"ok": False, "error": f"Unexpected arguments: {sorted(unknown)}"}
+        log_tool_result(name, result)
+        return result
     required = set(spec.parameters.get("required") or [])
     missing = required - set(arguments)
     if missing:
-        return {"ok": False, "error": f"Missing required arguments: {sorted(missing)}"}
+        result = {"ok": False, "error": f"Missing required arguments: {sorted(missing)}"}
+        log_tool_result(name, result)
+        return result
     try:
         data = spec.handler(client, **arguments)
-        return {"ok": True, "tool": name, "data": data}
+        result = {"ok": True, "tool": name, "data": data}
+        log_tool_result(name, result)
+        return result
     except DockaiError as exc:
-        return {"ok": False, "error": str(exc)}
+        result = {"ok": False, "error": str(exc)}
+        log_tool_result(name, result)
+        return result
     except ValueError as exc:
-        return {
+        result = {
             "ok": False,
             "error": str(exc),
             "hint": (
@@ -273,5 +303,9 @@ def execute_tool(
                 "Do not print tool JSON to the user."
             ),
         }
+        log_tool_result(name, result)
+        return result
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": f"Tool execution failed: {exc}"}
+        result = {"ok": False, "error": f"Tool execution failed: {exc}"}
+        log_tool_result(name, result)
+        return result

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dockai"
-version = "0.4.0"
+version = "0.5.0"
 description = "Natural-language Docker CLI agent"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -32,3 +32,6 @@ include = ["src/dockai", "tests", "README.md", "pyproject.toml"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "integration: tests that need a local Docker Engine and may pull images",
+]

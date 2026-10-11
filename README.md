@@ -1,8 +1,8 @@
 # dockai
 
-Natural-language Docker CLI agent. Phases 1–3 are in place; Phase 4 adds safe start/stop/restart with explicit confirmation.
+Natural-language Docker CLI agent (MVP through Phase 5 hardening).
 
-## Setup
+## Install
 
 ```bash
 python -m venv .venv
@@ -10,37 +10,34 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-Needs Docker Engine access. Natural-language modes need [Ollama](https://ollama.com) with a tool-capable model:
+Requirements:
+
+- Python 3.11+
+- Local Docker Engine access for the current user
+- [Ollama](https://ollama.com) + a tool-capable model for natural-language modes
 
 ```bash
 ollama pull llama3.1:8b
-# optional: export DOCKAI_MODEL=llama3.1:8b
-# optional: export OLLAMA_HOST=http://127.0.0.1:11434
+export DOCKAI_MODEL=llama3.1:8b          # optional
+export OLLAMA_HOST=http://127.0.0.1:11434 # optional
+export DOCKAI_DOCKER_TIMEOUT=60          # seconds, optional
+export DOCKAI_OLLAMA_TIMEOUT=120         # seconds, optional
+export DOCKAI_DEBUG=1                    # or use --verbose
 ```
 
-## Commands
+## Quick examples
 
 ```bash
-# Natural language (LLM + tools) — slower; most time is Ollama, not Docker
-dockai "show running containers"
-dockai ask "show the last 25 lines of api-server logs"
-dockai "stop api-server"          # proposes action, asks to confirm, then applies
-
-# Interactive session
-dockai chat
-
-# Direct tools (no LLM) — near docker CLI speed
+# Fast path (no LLM)
 dockai containers
-dockai containers --all
-dockai inspect <name-or-id>
-dockai logs <name-or-id>              # last 100 lines
-dockai logs <name-or-id> --tail 25
-dockai logs <name-or-id> --full
+dockai logs api-server -n 25
 dockai search flink
-dockai uptime
-dockai start <name-or-id>             # confirms, then starts
-dockai stop <name-or-id>
-dockai restart <name-or-id>
+dockai stop api-server          # shows impact, asks to confirm, verifies result
+
+# Natural language (LLM; slower — time is mostly Ollama)
+dockai "show running containers"
+dockai ask "show the last 25 lines of api-server logs" --verbose
+dockai chat
 ```
 
 ## Roadmap
@@ -49,21 +46,37 @@ dockai restart <name-or-id>
 |-------|--------|--------|
 | 1 Docker foundation | Done | SDK tools, logs/uptime/search, Rich tables |
 | 2 LLM integration | Done | Ollama adapter, tool schemas, ask loop |
-| 3 Interactive chat | Done | `dockai chat`, session focus for follow-ups |
-| **4 Safe mutations** | **Current** | start/stop/restart + confirm + verify |
-| 5 Hardening | Next | Acceptance tests, disposable containers, docs |
+| 3 Interactive chat | Done | `dockai chat`, session focus |
+| 4 Safe mutations | Done | start/stop/restart + confirm + verify |
+| **5 Hardening** | **Done** | Acceptance tests, disposable Docker tests, timeouts, diagnostics, docs |
 
-### Performance plan (query execution time)
+### Performance notes
 
-Natural-language asks are slow mainly because of **two LLM round-trips** (choose tool → summarize). Docker itself is usually milliseconds.
+Natural-language asks usually take seconds because of **LLM round-trips**, not Docker (`docker ps` is still fast). Prefer direct commands when you know the op. Mutation apply/verify runs in-app after confirm (no extra model hop). Spinners show stage (`Asking the model…` / `Fetching from Docker…`) plus `Completed in …`.
 
-Planned / preferred ways to cut latency:
+## Testing
 
-1. **Prefer direct commands** for known ops (`dockai containers`, `dockai logs …`) — no model.
-2. **Table-first replies** — after a successful read tool, print a Rich table and skip or shorten the summary LLM call.
-3. **Faster / smaller Ollama model** via `DOCKAI_MODEL` when tool-calling quality allows.
-4. **Fewer tool rounds** — coerce args, fuzzy names, and confirmation handled in-app (not by the model inventing JSON).
-5. **Timed UX** — spinner + `Completed in …` so you can see where time goes (`Asking the model…` vs `Fetching from Docker…`).
-6. **Mutations without a third LLM hop** — after confirm, apply + verify in-app and report Docker’s observed state.
+```bash
+# Unit + acceptance (mocked). Integration tests auto-skip if Docker is down.
+pytest
 
-Phase 5 will tighten this with diagnostics for per-stage timings.
+# Only disposable-container integration tests (needs Docker; may pull alpine:3.20)
+pytest -m integration
+```
+
+Acceptance IDs AT-01…AT-15 live in `tests/test_acceptance.py`. Integration tests create a unique `dockai-at-*` alpine container and remove it afterward — do not point them at production workloads.
+
+## Troubleshooting
+
+| Symptom | What to check |
+|---------|----------------|
+| `Docker Engine is unavailable` | Docker Desktop/daemon running; your user can access the socket |
+| Slow NL answers (~10–20s) | Expected with local 8B models; use `dockai containers` for instant lists |
+| Ollama errors | `ollama serve`, model pulled, `DOCKAI_MODEL` matches `ollama list` |
+| Need tool traces | `dockai -v "…"` or `DOCKAI_DEBUG=1` |
+
+## Safety
+
+- LLM selects only predefined tools (no shell command execution).
+- start/stop/restart **propose** only; the CLI requires explicit confirmation before apply.
+- Facts (IDs, status, logs) come from Docker responses, not model invention.

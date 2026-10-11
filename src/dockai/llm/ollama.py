@@ -17,18 +17,27 @@ class OllamaError(DockaiError):
     """Ollama request failed or returned an unusable response."""
 
 
+def _default_timeout() -> float:
+    raw = os.getenv("DOCKAI_OLLAMA_TIMEOUT", "120")
+    try:
+        return max(1.0, float(raw))
+    except ValueError:
+        return 120.0
+
+
 class OllamaProvider:
     def __init__(
         self,
         *,
         host: str | None = None,
         model: str | None = None,
-        timeout: float = 120.0,
+        timeout: float | None = None,
         client: httpx.Client | None = None,
     ) -> None:
         self.host = (host or os.getenv("OLLAMA_HOST") or "http://127.0.0.1:11434").rstrip("/")
         self.model = model or os.getenv("DOCKAI_MODEL") or "llama3.1:8b"
-        self._client = client or httpx.Client(base_url=self.host, timeout=timeout)
+        resolved = _default_timeout() if timeout is None else timeout
+        self._client = client or httpx.Client(base_url=self.host, timeout=resolved)
         self._owns_client = client is None
 
     def close(self) -> None:

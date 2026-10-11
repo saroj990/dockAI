@@ -10,6 +10,7 @@ import typer
 
 from dockai import __version__
 from dockai.agent import ChatSession, run_agent
+from dockai.diagnostics import configure_diagnostics
 from dockai.docker_client import get_client
 from dockai.errors import AmbiguousContainerError, DockaiError
 from dockai.formatting import (
@@ -141,8 +142,15 @@ def main(
         is_eager=True,
         callback=_version_callback,
     ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Enable diagnostic logs (tool calls/errors). Same as DOCKAI_DEBUG=1.",
+    ),
 ) -> None:
     """dockai CLI."""
+    configure_diagnostics(verbose=verbose)
 
 
 @app.command("ask")
