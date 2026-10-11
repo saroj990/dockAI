@@ -82,29 +82,42 @@ def list_containers(
     return [summarize_container(c) for c in containers]
 
 
+def _normalize_name(value: str) -> str:
+    """Collapse case/separators so 'saien backend api' matches 'saien-backend-api'."""
+    return "".join(ch for ch in value.lower() if ch.isalnum())
+
+
 def _match_candidates(
     client: docker.DockerClient,
     target: str,
     *,
     all_containers: bool = True,
 ) -> list[Container]:
-    target_l = target.lower()
+    target_l = target.strip().lower()
+    target_n = _normalize_name(target)
     try:
         containers = client.containers.list(all=all_containers)
     except APIError as exc:
         raise DockerUnavailableError(f"Failed to list containers: {exc}") from exc
 
     exact: list[Container] = []
+    exact_norm: list[Container] = []
     partial: list[Container] = []
+    partial_norm: list[Container] = []
     for container in containers:
         name = _primary_name(container).lower()
+        name_n = _normalize_name(name)
         cid = container.id.lower()
         short = _short_id(container.id).lower()
         if name == target_l or cid == target_l or short == target_l:
             exact.append(container)
-        elif target_l in name or cid.startswith(target_l):
+        elif target_n and name_n == target_n:
+            exact_norm.append(container)
+        elif target_l and (target_l in name or cid.startswith(target_l)):
             partial.append(container)
-    return exact or partial
+        elif len(target_n) >= 3 and target_n in name_n:
+            partial_norm.append(container)
+    return exact or exact_norm or partial or partial_norm
 
 
 def resolve_container(

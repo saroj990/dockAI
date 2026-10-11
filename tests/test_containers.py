@@ -12,6 +12,7 @@ from dockai.tools.containers import (
     resolve_container,
     search_containers,
 )
+from dockai.tools.containers import _primary_name
 from tests.conftest import make_container
 
 
@@ -55,6 +56,23 @@ def test_resolve_ambiguous(mock_client):
     with pytest.raises(AmbiguousContainerError) as exc:
         resolve_container(mock_client, "api")
     assert len(exc.value.matches) == 2
+
+
+def test_resolve_ignores_spaces_and_hyphens(mock_client):
+    mock_client.containers.list.return_value = [
+        make_container(cid="b" * 64, name="saien-backend-api"),
+        make_container(cid="c" * 64, name="nginx"),
+    ]
+    container = resolve_container(mock_client, "saien backend api")
+    assert _primary_name(container) == "saien-backend-api"
+
+
+def test_resolve_normalized_underscores(mock_client):
+    mock_client.containers.list.return_value = [
+        make_container(cid="f" * 64, name="my_app_server"),
+    ]
+    container = resolve_container(mock_client, "my-app server")
+    assert _primary_name(container) == "my_app_server"
 
 
 def test_resolve_not_found(mock_client):
