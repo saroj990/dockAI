@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from collections.abc import Callable
 from typing import Any
@@ -65,6 +66,8 @@ class AgentResult:
     messages: list[ChatMessage] = field(default_factory=list)
     focus_container: str | None = None
     pending_action: dict[str, Any] | None = None
+    # Stage timings: (label, seconds) — used to explain NL latency.
+    timings: list[tuple[str, float]] = field(default_factory=list)
 
 
 def _looks_like_tool_dump(text: str) -> bool:
@@ -213,6 +216,7 @@ def run_agent(
             messages=messages,
             focus_container=focus_container,
             pending_action=None,
+            timings=[],
         )
 
     registry = registry or build_registry()
@@ -221,6 +225,7 @@ def run_agent(
         ChatMessage(role="user", content=_with_focus(user_text, focus_container))
     )
     collected: list[dict[str, Any]] = []
+    timings: list[tuple[str, float]] = []
 
     def _finish(answer: str, turns: int) -> AgentResult:
         pending = _pending_from_results(collected)
@@ -231,17 +236,24 @@ def run_agent(
             messages=messages,
             focus_container=_next_focus(collected, focus_container),
             pending_action=pending,
+            timings=list(timings),
         )
 
+    model_calls = 0
     for turn in range(1, max_turns + 1):
         progress("Asking the model — please wait…")
+        model_calls += 1
+        t0 = time.perf_counter()
         assistant = llm.chat(messages, tools)
+        timings.append((f"ollama #{model_calls}", time.perf_counter() - t0))
         messages.append(assistant)
 
         if assistant.tool_calls:
             for call in assistant.tool_calls:
                 progress(f"Fetching from Docker — {call.name}…")
+                t1 = time.perf_counter()
                 result = execute_tool(registry, client, call.name, call.arguments)
+                timings.append((f"docker {call.name}", time.perf_counter() - t1))
                 collected.append(
                     {"tool": call.name, "arguments": call.arguments, "result": result}
                 )

@@ -39,8 +39,15 @@ def format_elapsed(seconds: float) -> str:
     return f"{int(minutes)}m {rem:.1f}s"
 
 
-def print_elapsed(seconds: float) -> None:
+def print_elapsed(
+    seconds: float,
+    timings: list[tuple[str, float]] | None = None,
+) -> None:
     console.print(f"[dim]Completed in {format_elapsed(seconds)}[/dim]")
+    if not timings:
+        return
+    for label, stage in timings:
+        console.print(f"[dim]  · {label}: {format_elapsed(stage)}[/dim]")
 
 
 def container_table(

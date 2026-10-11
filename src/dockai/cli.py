@@ -126,7 +126,7 @@ def _run_ask(
                 on_progress=lambda msg: status.update(f"[cyan]{msg}[/cyan]"),
             )
         console.print(result.answer)
-        print_elapsed(time.perf_counter() - started)
+        print_elapsed(time.perf_counter() - started, result.timings)
         if result.pending_action:
             _confirm_and_apply(client, result.pending_action)
     except Exception as exc:  # noqa: BLE001
@@ -254,7 +254,7 @@ def chat_cmd(
                         on_progress=lambda msg: status.update(f"[cyan]{msg}[/cyan]"),
                     )
                 console.print(f"[bold]Agent:[/bold] {result.answer}")
-                print_elapsed(time.perf_counter() - started)
+                print_elapsed(time.perf_counter() - started, result.timings)
                 if result.pending_action:
                     _confirm_and_apply(client, result.pending_action)
                 if session.focus_container:
