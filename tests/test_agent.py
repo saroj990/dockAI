@@ -100,12 +100,14 @@ def test_agent_loop_calls_tool_then_answers():
         client=client,
         on_progress=progress.append,
     )
-    assert result.answer == "Running: api-server"
+    assert result.presentation is not None
+    assert "Showing 1 container" in result.answer
     assert result.tool_results[0]["result"]["ok"] is True
     assert result.tool_results[0]["result"]["data"][0]["name"] == "api-server"
-    assert result.turns == 2
+    assert result.turns == 1
     assert any("Docker" in msg for msg in progress)
     assert any("model" in msg.lower() for msg in progress)
+    assert llm.responses  # summarization reply unused (table-first)
 
 
 def test_agent_reports_failed_tool_without_fake_success():
@@ -174,8 +176,9 @@ def test_agent_rejects_tool_json_dump_and_recovers():
         ]
     )
     result = run_agent("show last 25 lines", llm=llm, client=client)
-    assert "get_container_logs" not in result.answer or "Last 25" in result.answer
-    assert result.answer == "Last 25 lines:\nok"
+    assert result.presentation is not None
+    assert result.presentation["kind"] == "logs"
+    assert "saien-backend-api" in result.answer
     assert any(r["result"].get("ok") for r in result.tool_results)
 
 

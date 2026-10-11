@@ -19,6 +19,7 @@ from dockai.agent.registry import (
     ollama_tool_schemas,
 )
 from dockai.llm.base import ChatMessage, LLMProvider
+from dockai.present import try_table_first
 
 SYSTEM_PROMPT = """You are dockai, a Docker inspection assistant.
 Use only the provided tools for container facts. Never invent container IDs, names,
@@ -68,6 +69,8 @@ class AgentResult:
     pending_action: dict[str, Any] | None = None
     # Stage timings: (label, seconds) — used to explain NL latency.
     timings: list[tuple[str, float]] = field(default_factory=list)
+    # When set, CLI renders Rich output from Docker and skips LLM narration.
+    presentation: dict[str, Any] | None = None
 
 
 def _looks_like_tool_dump(text: str) -> bool:
@@ -217,6 +220,7 @@ def run_agent(
             focus_container=focus_container,
             pending_action=None,
             timings=[],
+            presentation=None,
         )
 
     registry = registry or build_registry()
@@ -227,7 +231,12 @@ def run_agent(
     collected: list[dict[str, Any]] = []
     timings: list[tuple[str, float]] = []
 
-    def _finish(answer: str, turns: int) -> AgentResult:
+    def _finish(
+        answer: str,
+        turns: int,
+        *,
+        presentation: dict[str, Any] | None = None,
+    ) -> AgentResult:
         pending = _pending_from_results(collected)
         return AgentResult(
             answer=answer,
@@ -237,6 +246,7 @@ def run_agent(
             focus_container=_next_focus(collected, focus_container),
             pending_action=pending,
             timings=list(timings),
+            presentation=presentation,
         )
 
     model_calls = 0
@@ -249,14 +259,19 @@ def run_agent(
         messages.append(assistant)
 
         if assistant.tool_calls:
+            batch: list[dict[str, Any]] = []
             for call in assistant.tool_calls:
                 progress(f"Fetching from Docker — {call.name}…")
                 t1 = time.perf_counter()
                 result = execute_tool(registry, client, call.name, call.arguments)
                 timings.append((f"docker {call.name}", time.perf_counter() - t1))
-                collected.append(
-                    {"tool": call.name, "arguments": call.arguments, "result": result}
-                )
+                item = {
+                    "tool": call.name,
+                    "arguments": call.arguments,
+                    "result": result,
+                }
+                batch.append(item)
+                collected.append(item)
                 messages.append(
                     ChatMessage(
                         role="tool",
@@ -266,10 +281,18 @@ def run_agent(
                     )
                 )
             # Skip a second LLM hop for mutation proposals (faster + safer).
-            pending = _pending_from_results(collected)
+            pending = _pending_from_results(batch)
             if pending is not None:
                 progress("Waiting for your confirmation…")
                 return _finish(_format_pending(pending), turn)
+
+            # Skip summarization LLM for simple list/logs/search/inspect.
+            direct = try_table_first(batch)
+            if direct is not None:
+                progress("Rendering Docker results (skipping model summary)…")
+                caption = direct["caption"]
+                messages.append(ChatMessage(role="assistant", content=caption))
+                return _finish(caption, turn, presentation=direct)
             continue
 
         answer = (assistant.content or "").strip()

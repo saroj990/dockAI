@@ -21,3 +21,6 @@ timeout = 60
 [diagnostics]
 # Same as DOCKAI_DEBUG=1 / dockai --verbose
 verbose = false
+
+# Tip: for speed, prefer a smaller tool-capable model such as qwen2.5:3b.
+# Simple list/logs/search/inspect answers skip the second LLM call (table-first).

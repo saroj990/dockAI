@@ -26,6 +26,7 @@ from dockai.formatting import (
     print_search,
 )
 from dockai.llm.ollama import OllamaProvider
+from dockai.present import render_presentation
 from dockai.tools import (
     apply_action,
     get_container_logs,
@@ -125,7 +126,7 @@ def _run_ask(
                 client=client,
                 on_progress=lambda msg: status.update(f"[cyan]{msg}[/cyan]"),
             )
-        console.print(result.answer)
+        _print_agent_result(result)
         print_elapsed(time.perf_counter() - started, result.timings)
         if result.pending_action:
             _confirm_and_apply(client, result.pending_action)
@@ -133,6 +134,16 @@ def _run_ask(
         _handle(exc)
     finally:
         llm.close()
+
+
+def _print_agent_result(result: Any, *, chat: bool = False) -> None:
+    if result.presentation is not None:
+        render_presentation(result.presentation)
+        return
+    if chat:
+        console.print(f"[bold]Agent:[/bold] {result.answer}")
+    else:
+        console.print(result.answer)
 
 
 def _lifecycle_cmd(
@@ -253,7 +264,7 @@ def chat_cmd(
                         text,
                         on_progress=lambda msg: status.update(f"[cyan]{msg}[/cyan]"),
                     )
-                console.print(f"[bold]Agent:[/bold] {result.answer}")
+                _print_agent_result(result, chat=True)
                 print_elapsed(time.perf_counter() - started, result.timings)
                 if result.pending_action:
                     _confirm_and_apply(client, result.pending_action)

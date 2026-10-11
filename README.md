@@ -70,7 +70,11 @@ dockai chat
 
 ### Performance notes
 
-Natural-language asks usually take seconds because of **LLM round-trips**, not Docker (`docker ps` is still fast). Prefer direct commands when you know the op. Mutation apply/verify runs in-app after confirm (no extra model hop). Spinners show stage (`Asking the model…` / `Fetching from Docker…`) plus `Completed in …`.
+Natural-language asks usually take seconds because of **LLM round-trips**, not Docker (`docker ps` is still fast). Prefer direct commands when you know the op.
+
+**Table-first:** for simple list / uptime / search / logs / inspect, dockai renders a Rich table from Docker and **skips the second Ollama summary** (often the slowest stage). Restart troubleshooting and multi-tool answers still use the model. Mutation apply/verify stays in-app after confirm.
+
+Spinners show stage plus `Completed in …` with per-stage timings (`ollama #1`, `docker …`).
 
 ## Testing
 
