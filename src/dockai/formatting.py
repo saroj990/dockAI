@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from contextlib import contextmanager
+from typing import Any, Iterator, Iterable
 
 from rich.console import Console
 from rich.table import Table
@@ -17,6 +18,29 @@ def print_error(message: str) -> None:
 
 def print_info(message: str) -> None:
     console.print(message)
+
+
+@contextmanager
+def busy_status(
+    message: str = "Working on it — fetching results, please wait…",
+) -> Iterator[Any]:
+    """Show a spinner while the agent or Docker work runs."""
+    with console.status(f"[cyan]{message}[/cyan]", spinner="dots") as status:
+        yield status
+
+
+def format_elapsed(seconds: float) -> str:
+    """Human-readable duration for CLI footers."""
+    if seconds < 1:
+        return f"{seconds * 1000:.0f} ms"
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, rem = divmod(seconds, 60)
+    return f"{int(minutes)}m {rem:.1f}s"
+
+
+def print_elapsed(seconds: float) -> None:
+    console.print(f"[dim]Completed in {format_elapsed(seconds)}[/dim]")
 
 
 def container_table(

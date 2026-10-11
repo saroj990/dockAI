@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import docker
@@ -23,7 +24,13 @@ class ChatSession:
         if not self.messages:
             self.messages = [ChatMessage(role="system", content=SYSTEM_PROMPT)]
 
-    def ask(self, user_text: str, *, max_turns: int = 6) -> AgentResult:
+    def ask(
+        self,
+        user_text: str,
+        *,
+        max_turns: int = 6,
+        on_progress: Callable[[str], None] | None = None,
+    ) -> AgentResult:
         result = run_agent(
             user_text,
             llm=self.llm,
@@ -31,6 +38,7 @@ class ChatSession:
             history=self.messages,
             focus_container=self.focus_container,
             max_turns=max_turns,
+            on_progress=on_progress,
         )
         self.messages = result.messages
         self.focus_container = result.focus_container

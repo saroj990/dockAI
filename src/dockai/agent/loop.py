@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from typing import Any
 
 import docker
@@ -143,7 +144,12 @@ def run_agent(
     history: list[ChatMessage] | None = None,
     focus_container: str | None = None,
     max_turns: int = 6,
+    on_progress: Callable[[str], None] | None = None,
 ) -> AgentResult:
+    def progress(message: str) -> None:
+        if on_progress is not None:
+            on_progress(message)
+
     registry = registry or build_registry()
     tools = ollama_tool_schemas(registry)
     if history is None:
@@ -167,11 +173,13 @@ def run_agent(
         )
 
     for turn in range(1, max_turns + 1):
+        progress("Asking the model — please wait…")
         assistant = llm.chat(messages, tools)
         messages.append(assistant)
 
         if assistant.tool_calls:
             for call in assistant.tool_calls:
+                progress(f"Fetching from Docker — {call.name}…")
                 result = execute_tool(registry, client, call.name, call.arguments)
                 collected.append(
                     {"tool": call.name, "arguments": call.arguments, "result": result}
@@ -188,9 +196,11 @@ def run_agent(
 
         answer = (assistant.content or "").strip()
         if _looks_like_tool_dump(answer):
+            progress("Retrying with a cleaner tool call…")
             messages.append(ChatMessage(role="user", content=_NUDGE))
             continue
 
+        progress("Almost done — preparing your answer…")
         if not answer:
             fallback = _answer_from_last_failure(collected)
             answer = fallback or (

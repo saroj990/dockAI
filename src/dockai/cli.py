@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from typing import Optional
 
 import typer
@@ -12,8 +13,10 @@ from dockai.agent import ChatSession, run_agent
 from dockai.docker_client import get_client
 from dockai.errors import AmbiguousContainerError, DockaiError
 from dockai.formatting import (
+    busy_status,
     console,
     print_containers,
+    print_elapsed,
     print_error,
     print_inspect,
     print_logs,
@@ -62,9 +65,17 @@ def _handle(exc: Exception) -> None:
 def _run_ask(prompt: str, *, model: str | None = None) -> None:
     llm = OllamaProvider(model=model)
     try:
-        client = get_client()
-        result = run_agent(prompt, llm=llm, client=client)
+        started = time.perf_counter()
+        with busy_status("Working on it — fetching results, please wait…") as status:
+            client = get_client()
+            result = run_agent(
+                prompt,
+                llm=llm,
+                client=client,
+                on_progress=lambda msg: status.update(f"[cyan]{msg}[/cyan]"),
+            )
         console.print(result.answer)
+        print_elapsed(time.perf_counter() - started)
     except Exception as exc:  # noqa: BLE001
         _handle(exc)
     finally:
@@ -126,8 +137,16 @@ def chat_cmd(
             if text.lower() in {"exit", "quit", "q"}:
                 break
             try:
-                result = session.ask(text)
+                started = time.perf_counter()
+                with busy_status(
+                    "Working on it — fetching results, please wait…"
+                ) as status:
+                    result = session.ask(
+                        text,
+                        on_progress=lambda msg: status.update(f"[cyan]{msg}[/cyan]"),
+                    )
                 console.print(f"[bold]Agent:[/bold] {result.answer}")
+                print_elapsed(time.perf_counter() - started)
                 if session.focus_container:
                     console.print(
                         f"[dim]Focused: {session.focus_container}[/dim]"

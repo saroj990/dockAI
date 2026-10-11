@@ -93,11 +93,19 @@ def test_agent_loop_calls_tool_then_answers():
             ),
         ]
     )
-    result = run_agent("show running containers", llm=llm, client=client)
+    progress: list[str] = []
+    result = run_agent(
+        "show running containers",
+        llm=llm,
+        client=client,
+        on_progress=progress.append,
+    )
     assert result.answer == "Running: api-server"
     assert result.tool_results[0]["result"]["ok"] is True
     assert result.tool_results[0]["result"]["data"][0]["name"] == "api-server"
     assert result.turns == 2
+    assert any("Docker" in msg for msg in progress)
+    assert any("model" in msg.lower() for msg in progress)
 
 
 def test_agent_reports_failed_tool_without_fake_success():
