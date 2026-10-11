@@ -8,7 +8,7 @@ from typing import Optional
 import typer
 
 from dockai import __version__
-from dockai.agent import run_agent
+from dockai.agent import ChatSession, run_agent
 from dockai.docker_client import get_client
 from dockai.errors import AmbiguousContainerError, DockaiError
 from dockai.formatting import (
@@ -34,7 +34,7 @@ app = typer.Typer(
 )
 
 _SUBCOMMANDS = frozenset(
-    {"ask", "containers", "inspect", "logs", "search", "uptime"}
+    {"ask", "chat", "containers", "inspect", "logs", "search", "uptime"}
 )
 
 
@@ -95,6 +95,49 @@ def ask_cmd(
 ) -> None:
     """Ask in natural language via Ollama tool calling."""
     _run_ask(prompt, model=model)
+
+
+@app.command("chat")
+def chat_cmd(
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        help="Ollama model name (default: DOCKAI_MODEL or llama3.1:8b).",
+    ),
+) -> None:
+    """Interactive chat with follow-ups in one session."""
+    llm = OllamaProvider(model=model)
+    try:
+        client = get_client()
+        session = ChatSession(llm=llm, client=client)
+        console.print(
+            "[bold]dockai chat[/bold] — follow-ups stay in this session. "
+            "Type [cyan]exit[/cyan] to quit."
+        )
+        while True:
+            try:
+                line = typer.prompt("You")
+            except (EOFError, KeyboardInterrupt):
+                console.print()
+                break
+            text = line.strip()
+            if not text:
+                continue
+            if text.lower() in {"exit", "quit", "q"}:
+                break
+            try:
+                result = session.ask(text)
+                console.print(f"[bold]Agent:[/bold] {result.answer}")
+                if session.focus_container:
+                    console.print(
+                        f"[dim]Focused: {session.focus_container}[/dim]"
+                    )
+            except DockaiError as exc:
+                print_error(str(exc))
+            except Exception as exc:  # noqa: BLE001
+                _handle(exc)
+    finally:
+        llm.close()
 
 
 @app.command("containers")

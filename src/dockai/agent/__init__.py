@@ -1,5 +1,6 @@
-"""Agent loop and tool registry."""
+"""Agent loop, session, and tool registry."""
 
 from dockai.agent.loop import AgentResult, run_agent
+from dockai.agent.session import ChatSession
 
-__all__ = ["AgentResult", "run_agent"]
+__all__ = ["AgentResult", "ChatSession", "run_agent"]

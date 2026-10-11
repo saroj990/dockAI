@@ -26,6 +26,8 @@ Pass JSON types correctly: integers (25) and booleans (true/false), not strings.
 Prefer concise answers. Use tables when the user asks for tabular output.
 For uptime questions, call list_uptime.
 Default log window is the last 100 lines unless the user asks otherwise.
+For follow-ups like "that container" or "its logs", use the session focused container
+only when the context marks exactly one. If unclear, ask which container.
 """
 
 _NUDGE = (
@@ -45,6 +47,8 @@ class AgentResult:
     answer: str
     tool_results: list[dict[str, Any]] = field(default_factory=list)
     turns: int = 0
+    messages: list[ChatMessage] = field(default_factory=list)
+    focus_container: str | None = None
 
 
 def _looks_like_tool_dump(text: str) -> bool:
@@ -71,21 +75,96 @@ def _answer_from_last_failure(collected: list[dict[str, Any]]) -> str | None:
     return None
 
 
+def _names_from_tool_results(collected: list[dict[str, Any]]) -> list[str]:
+    names: list[str] = []
+    for item in collected:
+        result = item.get("result") or {}
+        if not result.get("ok"):
+            continue
+        data = result.get("data")
+        if isinstance(data, dict):
+            if isinstance(data.get("container"), str):
+                names.append(data["container"])
+            if isinstance(data.get("name"), str) and "matches" not in data:
+                names.append(data["name"])
+            matches = data.get("matches")
+            if isinstance(matches, list):
+                for match in matches:
+                    if isinstance(match, dict) and isinstance(match.get("name"), str):
+                        names.append(match["name"])
+            containers = data.get("containers")
+            if isinstance(containers, list):
+                for row in containers:
+                    if isinstance(row, dict) and isinstance(row.get("name"), str):
+                        names.append(row["name"])
+        elif isinstance(data, list):
+            for row in data:
+                if isinstance(row, dict) and isinstance(row.get("name"), str):
+                    names.append(row["name"])
+    # preserve order, unique
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for name in names:
+        if name not in seen:
+            seen.add(name)
+            ordered.append(name)
+    return ordered
+
+
+def _next_focus(
+    collected: list[dict[str, Any]],
+    previous: str | None,
+) -> str | None:
+    names = _names_from_tool_results(collected)
+    if len(names) == 1:
+        return names[0]
+    if len(names) > 1:
+        return None
+    return previous
+
+
+def _with_focus(user_text: str, focus: str | None) -> str:
+    if not focus:
+        return user_text
+    return (
+        f"{user_text}\n\n"
+        f"[Session context: focused container is '{focus}'. "
+        "Use it only for unambiguous references such as 'that container' or 'its logs'. "
+        "If the user names a different container, use that name instead.]"
+    )
+
+
 def run_agent(
     user_text: str,
     *,
     llm: LLMProvider,
     client: docker.DockerClient,
     registry: dict[str, ToolSpec] | None = None,
+    history: list[ChatMessage] | None = None,
+    focus_container: str | None = None,
     max_turns: int = 6,
 ) -> AgentResult:
     registry = registry or build_registry()
     tools = ollama_tool_schemas(registry)
-    messages: list[ChatMessage] = [
-        ChatMessage(role="system", content=SYSTEM_PROMPT),
-        ChatMessage(role="user", content=user_text),
-    ]
+    if history is None:
+        messages: list[ChatMessage] = [
+            ChatMessage(role="system", content=SYSTEM_PROMPT),
+        ]
+    else:
+        messages = list(history)
+    messages.append(
+        ChatMessage(role="user", content=_with_focus(user_text, focus_container))
+    )
     collected: list[dict[str, Any]] = []
+
+    def _finish(answer: str, turns: int) -> AgentResult:
+        return AgentResult(
+            answer=answer,
+            tool_results=collected,
+            turns=turns,
+            messages=messages,
+            focus_container=_next_focus(collected, focus_container),
+        )
 
     for turn in range(1, max_turns + 1):
         assistant = llm.chat(messages, tools)
@@ -118,17 +197,14 @@ def run_agent(
                 "I could not produce an answer. "
                 "No tool result was available to summarize."
             )
-            return AgentResult(answer=answer, tool_results=collected, turns=turn)
-
-        return AgentResult(answer=answer, tool_results=collected, turns=turn)
+        return _finish(answer, turn)
 
     fallback = _answer_from_last_failure(collected)
-    return AgentResult(
-        answer=fallback
+    return _finish(
+        fallback
         or (
             "Stopped after the maximum number of tool rounds without a clear answer. "
             "Please retry with a more specific request."
         ),
-        tool_results=collected,
-        turns=max_turns,
+        max_turns,
     )

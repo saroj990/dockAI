@@ -25,6 +25,12 @@ ollama pull llama3.1:8b
 dockai "show running containers"
 dockai ask "show the last 25 lines of api-server logs"
 
+# Phase 3 — interactive session with follow-ups
+dockai chat
+# You: show containers that are restarting
+# You: show its recent logs
+
+
 # Phase 1 — direct tools (no LLM)
 dockai containers
 dockai containers --all
