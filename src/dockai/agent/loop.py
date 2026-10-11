@@ -10,6 +10,7 @@ from typing import Any
 
 import docker
 
+from dockai.agent.policy import check_restricted_request
 from dockai.agent.registry import (
     ToolSpec,
     build_registry,
@@ -32,6 +33,16 @@ only when the context marks exactly one. If unclear, ask which container.
 To start, stop, or restart a container, call start_container / stop_container /
 restart_container. Those tools only propose the change; the CLI asks the user to
 confirm before anything runs. Never claim you already stopped or started a container.
+
+Restricted (say clearly "Not supported", do not call mutation tools):
+- delete/remove/rm containers, images, volumes
+- prune / system cleanup
+- stopping or controlling Docker Desktop (host app, not a container)
+Never substitute stop/restart when the user asked to delete or remove.
+Never offer to stop the focused container as an alternative to a restricted action
+unless the user explicitly asks to stop that container by name.
+If the user says only "yes"/"ok", only propose a mutation if your previous message
+already proposed that exact start/stop/restart. Otherwise ask what they want.
 """
 
 _NUDGE = (
@@ -160,7 +171,8 @@ def _with_focus(user_text: str, focus: str | None) -> str:
         f"{user_text}\n\n"
         f"[Session context: focused container is '{focus}'. "
         "Use it only for unambiguous references such as 'that container' or 'its logs'. "
-        "If the user names a different container, use that name instead.]"
+        "If the user names a different container, use that name instead. "
+        "Do not use the focused container to reinterpret delete/remove/prune requests.]"
     )
 
 
@@ -179,14 +191,32 @@ def run_agent(
         if on_progress is not None:
             on_progress(message)
 
-    registry = registry or build_registry()
-    tools = ollama_tool_schemas(registry)
     if history is None:
         messages: list[ChatMessage] = [
             ChatMessage(role="system", content=SYSTEM_PROMPT),
         ]
     else:
         messages = list(history)
+
+    # Deterministic gate: refuse restricted asks before the LLM can mis-route them.
+    restriction = check_restricted_request(user_text)
+    if restriction is not None:
+        progress("Request is restricted — explaining clearly…")
+        messages.append(ChatMessage(role="user", content=user_text))
+        messages.append(
+            ChatMessage(role="assistant", content=restriction.message)
+        )
+        return AgentResult(
+            answer=restriction.message,
+            tool_results=[],
+            turns=0,
+            messages=messages,
+            focus_container=focus_container,
+            pending_action=None,
+        )
+
+    registry = registry or build_registry()
+    tools = ollama_tool_schemas(registry)
     messages.append(
         ChatMessage(role="user", content=_with_focus(user_text, focus_container))
     )

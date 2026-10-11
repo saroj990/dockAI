@@ -80,3 +80,4 @@ Acceptance IDs AT-01…AT-15 live in `tests/test_acceptance.py`. Integration tes
 - LLM selects only predefined tools (no shell command execution).
 - start/stop/restart **propose** only; the CLI requires explicit confirmation before apply.
 - Facts (IDs, status, logs) come from Docker responses, not model invention.
+- Restricted actions (delete/remove/prune, Docker Desktop control) are refused up front with a clear **Not supported** message — dockai will not silently substitute stop.
