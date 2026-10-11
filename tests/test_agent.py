@@ -117,3 +117,78 @@ def test_agent_reports_failed_tool_without_fake_success():
     result = run_agent("do something", llm=llm, client=client)
     assert result.tool_results[0]["result"]["ok"] is False
     assert "unknown tool" in result.answer.lower() or "failed" in result.answer.lower()
+
+
+def test_coerce_string_tail_and_bool_full():
+    client = MagicMock()
+    container = make_container(name="saien-backend-api", logs=b"line\n")
+    client.containers.list.return_value = [container]
+    result = execute_tool(
+        build_registry(),
+        client,
+        "get_container_logs",
+        {"target": "saien-backend-api", "tail": "25", "full": "false"},
+    )
+    assert result["ok"] is True
+    container.logs.assert_called_once_with(
+        stdout=True,
+        stderr=True,
+        timestamps=False,
+        tail=25,
+    )
+
+
+def test_agent_rejects_tool_json_dump_and_recovers():
+    client = MagicMock()
+    container = make_container(name="saien-backend-api", logs=b"ok\n")
+    client.containers.list.return_value = [container]
+    llm = ScriptedLLM(
+        [
+            ChatMessage(
+                role="assistant",
+                content=(
+                    'Let me try again.\n'
+                    '{"name": "get_container_logs", '
+                    '"parameters": {"tail": 25, "target": "saien-backend-api"}}'
+                ),
+            ),
+            ChatMessage(
+                role="assistant",
+                tool_calls=[
+                    ToolCall(
+                        id="2",
+                        name="get_container_logs",
+                        arguments={"target": "saien-backend-api", "tail": 25},
+                    )
+                ],
+            ),
+            ChatMessage(role="assistant", content="Last 25 lines:\nok"),
+        ]
+    )
+    result = run_agent("show last 25 lines", llm=llm, client=client)
+    assert "get_container_logs" not in result.answer or "Last 25" in result.answer
+    assert result.answer == "Last 25 lines:\nok"
+    assert any(r["result"].get("ok") for r in result.tool_results)
+
+
+def test_agent_max_turns_uses_last_tool_error():
+    client = MagicMock()
+    llm = ScriptedLLM(
+        [
+            ChatMessage(
+                role="assistant",
+                tool_calls=[ToolCall(id="1", name="nope", arguments={})],
+            ),
+            ChatMessage(
+                role="assistant",
+                content='{"name": "nope", "parameters": {}}',
+            ),
+            ChatMessage(
+                role="assistant",
+                content='{"name": "nope", "parameters": {}}',
+            ),
+        ]
+    )
+    result = run_agent("x", llm=llm, client=client, max_turns=3)
+    assert "could not complete" in result.answer.lower()
+    assert "Unknown tool" in result.answer or "unknown tool" in result.answer.lower()

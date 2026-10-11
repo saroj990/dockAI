@@ -28,10 +28,7 @@ class ToolSpec:
 def _require_bool(args: dict[str, Any], key: str, default: bool) -> bool:
     if key not in args or args[key] is None:
         return default
-    value = args[key]
-    if not isinstance(value, bool):
-        raise ValueError(f"'{key}' must be a boolean.")
-    return value
+    return _coerce_bool(args[key], key)
 
 
 def _require_str(args: dict[str, Any], key: str) -> str:
@@ -44,12 +41,38 @@ def _require_str(args: dict[str, Any], key: str) -> str:
 def _optional_int(args: dict[str, Any], key: str) -> int | None:
     if key not in args or args[key] is None:
         return None
-    value = args[key]
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"'{key}' must be an integer.")
+    value = _coerce_int(args[key], key)
     if value < 0:
         raise ValueError(f"'{key}' must be >= 0.")
     return value
+
+
+def _coerce_bool(value: Any, key: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            return True
+        if normalized in {"false", "0", "no"}:
+            return False
+    raise ValueError(f"'{key}' must be a boolean.")
+
+
+def _coerce_int(value: Any, key: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"'{key}' must be an integer.")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text.isdigit() or (text.startswith("-") and text[1:].isdigit()):
+            return int(text)
+    raise ValueError(f"'{key}' must be an integer.")
 
 
 def build_registry() -> dict[str, ToolSpec]:
@@ -201,6 +224,14 @@ def execute_tool(
     except DockaiError as exc:
         return {"ok": False, "error": str(exc)}
     except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+        return {
+            "ok": False,
+            "error": str(exc),
+            "hint": (
+                "Retry via the tool interface with JSON types: "
+                'integers like 25 (not "25"), booleans like false (not "false"). '
+                "Do not print tool JSON to the user."
+            ),
+        }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"Tool execution failed: {exc}"}
