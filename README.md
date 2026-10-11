@@ -1,6 +1,6 @@
 # dockai
 
-Natural-language Docker CLI agent. Phase 1 provides a typed CLI over the Docker SDK for read-only container inspection.
+Natural-language Docker CLI agent.
 
 ## Setup
 
@@ -10,20 +10,28 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-Requires a local Docker Engine the current user can access.
-
-## Phase 1 commands
+Needs Docker Engine access. Phase 2 also needs [Ollama](https://ollama.com) with a tool-capable model:
 
 ```bash
-dockai containers                     # running containers
-dockai containers --all               # all containers
+ollama pull llama3.1
+# optional: export DOCKAI_MODEL=llama3.1
+# optional: export OLLAMA_HOST=http://127.0.0.1:11434
+```
+
+## Commands
+
+```bash
+# Phase 2 — natural language (Ollama tool calling)
+dockai "show running containers"
+dockai ask "show the last 25 lines of api-server logs"
+
+# Phase 1 — direct tools (no LLM)
+dockai containers
+dockai containers --all
 dockai inspect <name-or-id>
 dockai logs <name-or-id>              # last 100 lines
 dockai logs <name-or-id> --tail 25
 dockai logs <name-or-id> --full
-dockai search flink                   # keyword search (all containers)
-dockai search flink --running-only
-dockai uptime                         # uptime / state table
+dockai search flink
+dockai uptime
 ```
-
-Later phases add LLM tool calling, chat, and confirmed start/stop/restart.

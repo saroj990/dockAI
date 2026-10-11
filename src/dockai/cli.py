@@ -1,4 +1,4 @@
-"""Typer CLI for Phase 1 read-only Docker operations."""
+"""Typer CLI — Phase 1 tools + Phase 2 natural-language ask."""
 
 from __future__ import annotations
 
@@ -7,15 +7,18 @@ from typing import Optional
 import typer
 
 from dockai import __version__
+from dockai.agent import run_agent
 from dockai.docker_client import get_client
 from dockai.errors import AmbiguousContainerError, DockaiError
 from dockai.formatting import (
+    console,
     print_containers,
     print_error,
     print_inspect,
     print_logs,
     print_search,
 )
+from dockai.llm.ollama import OllamaProvider
 from dockai.tools import (
     get_container_logs,
     inspect_container,
@@ -25,8 +28,9 @@ from dockai.tools import (
 
 app = typer.Typer(
     name="dockai",
-    help="Natural-language Docker agent — Phase 1: Docker foundation (read-only).",
-    no_args_is_help=True,
+    help="Natural-language Docker agent.",
+    no_args_is_help=False,
+    invoke_without_command=True,
 )
 
 
@@ -51,8 +55,30 @@ def _handle(exc: Exception) -> None:
     raise typer.Exit(code=1) from exc
 
 
+def _run_ask(prompt: str, *, model: str | None = None) -> None:
+    llm = OllamaProvider(model=model)
+    try:
+        client = get_client()
+        result = run_agent(prompt, llm=llm, client=client)
+        console.print(result.answer)
+    except Exception as exc:  # noqa: BLE001
+        _handle(exc)
+    finally:
+        llm.close()
+
+
 @app.callback()
 def main(
+    ctx: typer.Context,
+    prompt: Optional[str] = typer.Argument(
+        None,
+        help="Natural-language request (Phase 2). Example: dockai \"show running containers\"",
+    ),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        help="Ollama model name (default: DOCKAI_MODEL or llama3.1).",
+    ),
     version: bool = typer.Option(
         False,
         "--version",
@@ -62,6 +88,25 @@ def main(
     ),
 ) -> None:
     """dockai CLI."""
+    if ctx.invoked_subcommand is not None:
+        return
+    if prompt:
+        _run_ask(prompt, model=model)
+        return
+    typer.echo(ctx.get_help())
+
+
+@app.command("ask")
+def ask_cmd(
+    prompt: str = typer.Argument(..., help="Natural-language Docker request."),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        help="Ollama model name (default: DOCKAI_MODEL or llama3.1).",
+    ),
+) -> None:
+    """Ask in natural language via Ollama tool calling."""
+    _run_ask(prompt, model=model)
 
 
 @app.command("containers")
@@ -84,7 +129,7 @@ def containers_cmd(
             title=title,
             empty_message="No containers found.",
         )
-    except Exception as exc:  # noqa: BLE001 — CLI boundary
+    except Exception as exc:  # noqa: BLE001
         _handle(exc)
 
 
