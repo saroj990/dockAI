@@ -1,83 +1,264 @@
 # dockai
 
-Natural-language Docker CLI agent (MVP through Phase 5 hardening).
+Natural-language Docker CLI agent. Talk to your local Docker Engine in plain English, or use fast direct commands (no LLM).
 
-## Install
+## Fresh machine setup (clone → first command)
+
+Follow these steps **in order** on a new Mac/Linux machine.
+
+### 0. Prerequisites (install once)
+
+| Need | Why | Check |
+|------|-----|--------|
+| **Git** | Clone the repo | `git --version` |
+| **Python 3.11+** | Runtime | `python3 --version` |
+| **Docker Engine** | Container source of truth | `docker ps` (must work **without** sudo for your user) |
+| **Ollama** | Natural-language mode only | `ollama --version` |
+
+- Docker: install [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Mac/Windows) or Docker Engine (Linux). Start it, then confirm `docker ps` works.
+- Ollama: install from [https://ollama.com](https://ollama.com), then start it (`ollama serve` if it is not already running).
+- You do **not** need Ollama for `dockai containers`, `logs`, `stop`, etc.
+
+### 1. Clone
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+git clone git@github.com:saroj990/dockAI.git
+cd dockAI
+```
+
+HTTPS alternative:
+
+```bash
+git clone https://github.com/saroj990/dockAI.git
+cd dockAI
+```
+
+### 2. Create a virtualenv and install dockai
+
+Always work **inside** the venv. If you skip activation, `dockai` will not be found.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+python -m pip install --upgrade pip
 pip install -e ".[dev]"
 ```
 
-Requirements:
-
-- Python 3.11+
-- Local Docker Engine access for the current user
-- [Ollama](https://ollama.com) + a tool-capable model for natural-language modes
+Confirm the CLI is available:
 
 ```bash
-ollama pull llama3.1:8b
-export DOCKAI_MODEL=llama3.1:8b          # optional
-export OLLAMA_HOST=http://127.0.0.1:11434 # optional
-export DOCKAI_DOCKER_TIMEOUT=60          # seconds, optional
-export DOCKAI_OLLAMA_TIMEOUT=120         # seconds, optional
-export DOCKAI_DEBUG=1                    # or use --verbose
+which dockai
+dockai --version
+dockai --help
 ```
 
-## Quick examples
+If `dockai: command not found`, you are not in the venv — run `source .venv/bin/activate` again.
+
+### 3. Config file (recommended)
 
 ```bash
-# Fast path (no LLM)
-dockai containers
-dockai logs api-server -n 25
-dockai search flink
-dockai stop api-server          # shows impact, asks to confirm, verifies result
+cp dockai.example.toml dockai.toml
+```
 
-# Natural language (LLM; slower — time is mostly Ollama)
+Edit `dockai.toml` and set a model you will actually pull (example for speed):
+
+```toml
+[ollama]
+host = "http://127.0.0.1:11434"
+model = "qwen2.5:3b"    # must match `ollama list`
+timeout = 120
+
+[docker]
+timeout = 60
+
+[diagnostics]
+verbose = false
+```
+
+Show what dockai will use:
+
+```bash
+dockai config
+```
+
+**Config search order:** `DOCKAI_CONFIG` → `./dockai.toml` → `~/.config/dockai/config.toml`  
+**Precedence:** CLI flags > environment variables > config file > defaults
+
+| Setting | Config | Environment | CLI |
+|---------|--------|-------------|-----|
+| Ollama host | `[ollama] host` | `OLLAMA_HOST` | — |
+| Model | `[ollama] model` | `DOCKAI_MODEL` | `--model` |
+| Ollama timeout | `[ollama] timeout` | `DOCKAI_OLLAMA_TIMEOUT` | — |
+| Docker timeout | `[docker] timeout` | `DOCKAI_DOCKER_TIMEOUT` | — |
+| Verbose logs | `[diagnostics] verbose` | `DOCKAI_DEBUG=1` | `-v` / `--verbose` |
+| Config path | — | `DOCKAI_CONFIG=/path/to.toml` | `--config` |
+
+Env vars are **optional** if `dockai.toml` is set. Use them only to override without editing the file.
+
+### 4. Pull the Ollama model (NL mode)
+
+The model name in config **must** exist locally:
+
+```bash
+ollama pull qwen2.5:3b          # or whatever you set in dockai.toml
+ollama list                     # confirm the name matches exactly
+curl -s http://127.0.0.1:11434/api/tags | head  # API reachable?
+```
+
+Other workable options: `llama3.1:8b` (higher quality, slower), `gemma3:4b` (faster, weaker tools).
+
+### 5. Smoke test
+
+```bash
+# Always activate first (new terminal)
+cd /path/to/dockAI
+source .venv/bin/activate
+
+# 1) Docker-only (fastest — no Ollama)
+dockai containers
+
+# 2) NL shortcut (no Ollama; look for shortcut:list in timings)
 dockai "show running containers"
-dockai ask "show the last 25 lines of api-server logs" --verbose
+
+# 3) Interactive
 dockai chat
 ```
 
-## Roadmap
+Stage timings tell you which path ran:
 
-| Phase | Status | Focus |
-|-------|--------|--------|
-| 1 Docker foundation | Done | SDK tools, logs/uptime/search, Rich tables |
-| 2 LLM integration | Done | Ollama adapter, tool schemas, ask loop |
-| 3 Interactive chat | Done | `dockai chat`, session focus |
-| 4 Safe mutations | Done | start/stop/restart + confirm + verify |
-| **5 Hardening** | **Done** | Acceptance tests, disposable Docker tests, timeouts, diagnostics, docs |
+```text
+# NL shortcut (typical ~100–300 ms)
+Completed in 132 ms
+  · shortcut:list: 108 ms
 
-### Performance notes
-
-Natural-language asks usually take seconds because of **LLM round-trips**, not Docker (`docker ps` is still fast). Prefer direct commands when you know the op. Mutation apply/verify runs in-app after confirm (no extra model hop). Spinners show stage (`Asking the model…` / `Fetching from Docker…`) plus `Completed in …`.
-
-## Testing
-
-```bash
-# Unit + acceptance (mocked). Integration tests auto-skip if Docker is down.
-pytest
-
-# Only disposable-container integration tests (needs Docker; may pull alpine:3.20)
-pytest -m integration
+# LLM path (seconds — model chose the tool)
+Completed in 9.2s
+  · ollama #1: 9.1s
+  · docker list_containers: 128 ms
 ```
 
-Acceptance IDs AT-01…AT-15 live in `tests/test_acceptance.py`. Integration tests create a unique `dockai-at-*` alpine container and remove it afterward — do not point them at production workloads.
+---
 
-## Troubleshooting
+## Day-to-day usage
 
-| Symptom | What to check |
-|---------|----------------|
-| `Docker Engine is unavailable` | Docker Desktop/daemon running; your user can access the socket |
-| Slow NL answers (~10–20s) | Expected with local 8B models; use `dockai containers` for instant lists |
-| Ollama errors | `ollama serve`, model pulled, `DOCKAI_MODEL` matches `ollama list` |
-| Need tool traces | `dockai -v "…"` or `DOCKAI_DEBUG=1` |
+```bash
+cd /path/to/dockAI
+source .venv/bin/activate
+
+# Direct commands (no LLM)
+dockai containers
+dockai containers --all
+dockai logs <name> -n 25
+dockai search flink
+dockai uptime
+dockai inspect <name>
+dockai stop <name>              # confirms, then applies
+dockai start <name>
+dockai restart <name>
+dockai config                   # show resolved settings
+```
+
+### Natural language
+
+**Fast NL shortcuts** (skip Ollama when the phrase is clear):
+
+```bash
+dockai "show running containers"
+dockai "can you pull only name and uptime of running containers"
+dockai "show last 25 lines of timescaledb logs"
+dockai "find containers named postgis"
+dockai "inspect timescaledb"
+dockai "stop api-server"          # still asks for confirmation
+```
+
+**Still uses Ollama** (needs interpretation):
+
+```bash
+dockai "why is my container restarting?"
+dockai "what looks unhealthy?"
+```
+
+**Chat** (shortcuts + columns + focus work in-session):
+
+```bash
+dockai chat
+# You: show running containers
+# You: only name and uptime
+# You: show its last 25 log lines    # uses focused container when unambiguous
+```
+
+```bash
+dockai -v "show running containers"   # tool diagnostics
+```
+
+### Columns
+
+Ask for a subset and table-first / shortcuts will render only those fields (`id`, `name`, `status`, `image`, `uptime`, `restarts`):
+
+```bash
+dockai "only name and uptime of running containers"
+dockai "show ID, status, and name in a table"
+```
+
+---
+
+## Common setup mistakes
+
+| Problem | Cause | Fix |
+|---------|--------|-----|
+| `dockai: command not found` | venv not activated, or install skipped | `source .venv/bin/activate` then `pip install -e ".[dev]"` |
+| `Docker Engine is unavailable` | Docker not running / no socket permission | Start Docker Desktop; re-check `docker ps` |
+| Ollama connection errors | Ollama not running or wrong host | `ollama serve`; set `host` in `dockai.toml` |
+| Model not found / bad tool calls | Config model ≠ pulled model | `ollama list` and match `[ollama] model` exactly |
+| `python: command not found` | Only `python3` on PATH | Use `python3 -m venv .venv` |
+| Wrong Python (3.9/3.10) | Old system Python | Install 3.11+ and recreate `.venv` |
+| Slow answers (10–20s+) | LLM path / large model | Prefer shortcut phrases or `dockai containers`; use `qwen2.5:3b` |
+
+---
+
+## Testing (optional)
+
+```bash
+source .venv/bin/activate
+pytest                  # unit + acceptance (mocked Docker)
+pytest -m integration   # disposable alpine container (needs Docker)
+```
+
+---
+
+## Performance notes
+
+| Path | Typical speed | When |
+|------|---------------|------|
+| Direct CLI (`dockai containers`) | ~docker speed | You know the command |
+| **NL shortcut** | ~100–300 ms | Common phrases (see above) |
+| Table-first after Ollama | ~one model call | LLM picks tool; skip summary |
+| Full LLM | many seconds | Troubleshooting / vague asks |
+
+- Direct commands ≈ `docker` speed.
+- NL cost is mostly **Ollama**, not Docker — unless a shortcut matches (`shortcut:list` / `shortcut:logs` in timings).
+- **Table-first:** list / uptime / search / logs / inspect skip the second Ollama summary.
+- **Column intent:** “only name and uptime” is applied to the Rich table (not a fixed full column set).
+
+---
 
 ## Safety
 
-- LLM selects only predefined tools (no shell command execution).
-- start/stop/restart **propose** only; the CLI requires explicit confirmation before apply.
-- Facts (IDs, status, logs) come from Docker responses, not model invention.
-- Restricted actions (delete/remove/prune, Docker Desktop control) are refused up front with a clear **Not supported** message — dockai will not silently substitute stop.
+- Only predefined tools (no shell execution of model output).
+- start / stop / restart require explicit confirmation.
+- Facts come from Docker, not model invention.
+- delete / prune / Docker Desktop control → clear **Not supported** refusal.
+
+---
+
+## Roadmap
+
+| Phase | Status |
+|-------|--------|
+| 1 Docker foundation | Done |
+| 2 LLM integration | Done |
+| 3 Interactive chat | Done |
+| 4 Safe mutations | Done |
+| 5 Hardening | Done |
+
+Open issues / backlog: see `GITHUB_ISSUES.md`.

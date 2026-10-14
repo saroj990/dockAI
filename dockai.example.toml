@@ -1,0 +1,26 @@
+# Example dockai config.
+# Copy to one of:
+#   ./dockai.toml
+#   ~/.config/dockai/config.toml
+# Or set DOCKAI_CONFIG=/path/to/file.toml
+#
+# Precedence (highest wins): CLI flags > environment variables > this file > built-in defaults
+
+[ollama]
+# Local Ollama HTTP API
+host = "http://127.0.0.1:11434"
+# Must match a model from `ollama list` that supports tool calling
+model = "llama3.1:8b"
+# Request timeout in seconds
+timeout = 120
+
+[docker]
+# Docker Engine API timeout in seconds
+timeout = 60
+
+[diagnostics]
+# Same as DOCKAI_DEBUG=1 / dockai --verbose
+verbose = false
+
+# Tip: for speed, prefer a smaller tool-capable model such as qwen2.5:3b.
+# Simple list/logs/search/inspect answers skip the second LLM call (table-first).

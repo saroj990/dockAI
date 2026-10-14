@@ -1,5 +1,5 @@
+from dockai.config import load_settings
 from dockai.diagnostics import configure_diagnostics, debug_enabled
-from dockai.llm.ollama import _default_timeout
 
 
 def test_debug_env(monkeypatch):
@@ -10,6 +10,10 @@ def test_debug_env(monkeypatch):
     configure_diagnostics(verbose=True)
 
 
-def test_ollama_timeout_env(monkeypatch):
+def test_ollama_timeout_env(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.delenv("DOCKAI_CONFIG", raising=False)
     monkeypatch.setenv("DOCKAI_OLLAMA_TIMEOUT", "30")
-    assert _default_timeout() == 30.0
+    settings = load_settings()
+    assert settings.ollama_timeout == 30.0

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from collections.abc import Callable
 from typing import Any
@@ -17,7 +18,9 @@ from dockai.agent.registry import (
     execute_tool,
     ollama_tool_schemas,
 )
+from dockai.agent.shortcuts import match_shortcut
 from dockai.llm.base import ChatMessage, LLMProvider
+from dockai.present import try_table_first
 
 SYSTEM_PROMPT = """You are dockai, a Docker inspection assistant.
 Use only the provided tools for container facts. Never invent container IDs, names,
@@ -26,6 +29,8 @@ If a tool returns ok=false, call the same tool again with corrected arguments, o
 briefly explain the error. Never print raw tool-call JSON to the user.
 Pass JSON types correctly: integers (25) and booleans (true/false), not strings.
 Prefer concise answers. Use tables when the user asks for tabular output.
+When the user asks for specific columns (e.g. only name and uptime), pass columns
+on list_containers / list_uptime / search_containers.
 For uptime questions, call list_uptime.
 Default log window is the last 100 lines unless the user asks otherwise.
 For follow-ups like "that container" or "its logs", use the session focused container
@@ -65,6 +70,10 @@ class AgentResult:
     messages: list[ChatMessage] = field(default_factory=list)
     focus_container: str | None = None
     pending_action: dict[str, Any] | None = None
+    # Stage timings: (label, seconds) — used to explain NL latency.
+    timings: list[tuple[str, float]] = field(default_factory=list)
+    # When set, CLI renders Rich output from Docker and skips LLM narration.
+    presentation: dict[str, Any] | None = None
 
 
 def _looks_like_tool_dump(text: str) -> bool:
@@ -213,6 +222,8 @@ def run_agent(
             messages=messages,
             focus_container=focus_container,
             pending_action=None,
+            timings=[],
+            presentation=None,
         )
 
     registry = registry or build_registry()
@@ -221,8 +232,14 @@ def run_agent(
         ChatMessage(role="user", content=_with_focus(user_text, focus_container))
     )
     collected: list[dict[str, Any]] = []
+    timings: list[tuple[str, float]] = []
 
-    def _finish(answer: str, turns: int) -> AgentResult:
+    def _finish(
+        answer: str,
+        turns: int,
+        *,
+        presentation: dict[str, Any] | None = None,
+    ) -> AgentResult:
         pending = _pending_from_results(collected)
         return AgentResult(
             answer=answer,
@@ -231,20 +248,80 @@ def run_agent(
             messages=messages,
             focus_container=_next_focus(collected, focus_container),
             pending_action=pending,
+            timings=list(timings),
+            presentation=presentation,
         )
 
+    # High-confidence phrases skip Ollama entirely.
+    shortcut = match_shortcut(user_text, focus_container=focus_container)
+    if shortcut is not None:
+        progress(f"NL shortcut matched ({shortcut.label}) — skipping Ollama…")
+        t0 = time.perf_counter()
+        result = execute_tool(
+            registry, client, shortcut.tool, shortcut.arguments
+        )
+        timings.append((shortcut.label, time.perf_counter() - t0))
+        item = {
+            "tool": shortcut.tool,
+            "arguments": shortcut.arguments,
+            "result": result,
+        }
+        collected.append(item)
+        messages.append(
+            ChatMessage(
+                role="assistant",
+                content=f"[nl-shortcut] {shortcut.tool}",
+            )
+        )
+        messages.append(
+            ChatMessage(
+                role="tool",
+                name=shortcut.tool,
+                content=json.dumps(result, default=str),
+            )
+        )
+        pending = _pending_from_results(collected)
+        if pending is not None:
+            return _finish(_format_pending(pending), 0)
+        if result.get("ok"):
+            direct = try_table_first([item], user_text=user_text)
+            if direct is not None:
+                messages.append(
+                    ChatMessage(role="assistant", content=direct["caption"])
+                )
+                return _finish(direct["caption"], 0, presentation=direct)
+            return _finish(
+                json.dumps(result.get("data"), default=str)[:2000],
+                0,
+            )
+        return _finish(
+            f"I could not complete that request: {result.get('error', 'unknown error')}",
+            0,
+        )
+
+    model_calls = 0
     for turn in range(1, max_turns + 1):
         progress("Asking the model — please wait…")
+        model_calls += 1
+        t0 = time.perf_counter()
         assistant = llm.chat(messages, tools)
+        timings.append((f"ollama #{model_calls}", time.perf_counter() - t0))
         messages.append(assistant)
 
         if assistant.tool_calls:
+            batch: list[dict[str, Any]] = []
             for call in assistant.tool_calls:
                 progress(f"Fetching from Docker — {call.name}…")
+                t1 = time.perf_counter()
                 result = execute_tool(registry, client, call.name, call.arguments)
-                collected.append(
-                    {"tool": call.name, "arguments": call.arguments, "result": result}
-                )
+                timings.append((f"docker {call.name}", time.perf_counter() - t1))
+                item = {
+                    "tool": call.name,
+                    "arguments": call.arguments,
+                    "result": result,
+                }
+                batch.append(item)
+                collected.append(item)
                 messages.append(
                     ChatMessage(
                         role="tool",
@@ -254,10 +331,18 @@ def run_agent(
                     )
                 )
             # Skip a second LLM hop for mutation proposals (faster + safer).
-            pending = _pending_from_results(collected)
+            pending = _pending_from_results(batch)
             if pending is not None:
                 progress("Waiting for your confirmation…")
                 return _finish(_format_pending(pending), turn)
+
+            # Skip summarization LLM for simple list/logs/search/inspect.
+            direct = try_table_first(batch, user_text=user_text)
+            if direct is not None:
+                progress("Rendering Docker results (skipping model summary)…")
+                caption = direct["caption"]
+                messages.append(ChatMessage(role="assistant", content=caption))
+                return _finish(caption, turn, presentation=direct)
             continue
 
         answer = (assistant.content or "").strip()

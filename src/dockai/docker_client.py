@@ -2,26 +2,18 @@
 
 from __future__ import annotations
 
-import os
-
 import docker
 from docker.errors import DockerException
 
+from dockai.config import Settings, load_settings
 from dockai.diagnostics import LOGGER
 from dockai.errors import DockerUnavailableError
 
 
-def _timeout() -> float:
-    raw = os.getenv("DOCKAI_DOCKER_TIMEOUT", "60")
-    try:
-        return max(1.0, float(raw))
-    except ValueError:
-        return 60.0
-
-
-def get_client() -> docker.DockerClient:
+def get_client(settings: Settings | None = None) -> docker.DockerClient:
     """Return a Docker client or raise a clear domain error."""
-    timeout = _timeout()
+    cfg = settings or load_settings()
+    timeout = cfg.docker_timeout
     try:
         LOGGER.debug("Connecting to Docker (timeout=%ss)", timeout)
         client = docker.from_env(timeout=timeout)

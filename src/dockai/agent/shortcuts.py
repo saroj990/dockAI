@@ -1,0 +1,218 @@
+"""High-confidence NL shortcuts that skip Ollama for common Docker asks."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Any
+
+from dockai.columns import parse_columns_from_text
+
+# If present, the request likely needs real interpretation — do not shortcut.
+_NEEDS_LLM = re.compile(
+    r"\b("
+    r"why|how\s+come|what('?s|\s+is|\s+could|\s+might)|"
+    r"issue|problem|wrong|broken|failing|troubleshoot|diagnos|"
+    r"explain|analy[sz]e|suggest|should\s+i|help\s+me\s+understand"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class Shortcut:
+    tool: str
+    arguments: dict[str, Any]
+    label: str
+
+
+def match_shortcut(
+    user_text: str,
+    *,
+    focus_container: str | None = None,
+) -> Shortcut | None:
+    """
+    Return a tool call when the phrase is unambiguous enough to skip the LLM.
+
+    Conservative: prefer falling through to Ollama over a wrong shortcut.
+    """
+    text = " ".join((user_text or "").strip().split())
+    if not text or _NEEDS_LLM.search(text):
+        return None
+
+    lower = text.lower()
+
+    # Focused follow-up logs: "show its last 25 log lines" / "show its logs"
+    if focus_container:
+        focused_logs = re.fullmatch(
+            r"(?:please\s+)?(?:show|get|fetch|pull)?\s*"
+            r"(?:me\s+)?(?:its|the)?\s*"
+            r"(?:last\s+(\d+)\s+)?"
+            r"(?:log\s+lines?|logs?)",
+            lower,
+        )
+        if focused_logs:
+            args: dict[str, Any] = {"target": focus_container}
+            if focused_logs.group(1):
+                args["tail"] = int(focused_logs.group(1))
+            return Shortcut(
+                tool="get_container_logs",
+                arguments=args,
+                label="shortcut:logs",
+            )
+
+    # Mutations: "stop api-server" / "restart my-app"
+    mut = re.fullmatch(
+        r"(?:please\s+)?(start|stop|restart)\s+(?:container\s+)?(?:named\s+|called\s+)?(.+)",
+        lower,
+    )
+    if mut:
+        action, target = mut.group(1), mut.group(2).strip(" .")
+        if target and not _looks_like_question(target):
+            return Shortcut(
+                tool=f"{action}_container",
+                arguments={"target": target},
+                label=f"shortcut:{action}",
+            )
+
+    # Logs: "show last 25 lines of api-server logs" / "logs for api-server"
+    logs = re.fullmatch(
+        r"(?:please\s+)?(?:show|get|fetch|pull|dig\s+into)?\s*"
+        r"(?:the\s+)?(?:last\s+(\d+)\s+lines?\s+of\s+)?"
+        r"(.+?)\s+logs?"
+        r"(?:\s+for\s+last\s+(\d+)\s+lines?)?"
+        r"(?:\s+please)?",
+        lower,
+    )
+    if logs:
+        tail_a, target, tail_b = logs.group(1), logs.group(2), logs.group(3)
+        target = _clean_target(target)
+        if target and not _looks_like_question(target):
+            args: dict[str, Any] = {"target": target}
+            tail = tail_a or tail_b
+            if tail:
+                args["tail"] = int(tail)
+            return Shortcut(
+                tool="get_container_logs",
+                arguments=args,
+                label="shortcut:logs",
+            )
+
+    # Alternate logs: "logs of api-server" / "show logs for api-server"
+    logs2 = re.fullmatch(
+        r"(?:please\s+)?(?:show|get|fetch|pull)?\s*"
+        r"logs?\s+(?:of|for|from)\s+(.+)"
+        r"(?:\s+last\s+(\d+)\s+lines?)?",
+        lower,
+    )
+    if logs2:
+        target = _clean_target(logs2.group(1))
+        if target and not _looks_like_question(target):
+            args = {"target": target}
+            if logs2.group(2):
+                args["tail"] = int(logs2.group(2))
+            return Shortcut(
+                tool="get_container_logs",
+                arguments=args,
+                label="shortcut:logs",
+            )
+
+    # Inspect: "inspect api-server"
+    insp = re.fullmatch(
+        r"(?:please\s+)?inspect\s+(?:container\s+)?(.+)",
+        lower,
+    )
+    if insp:
+        target = _clean_target(insp.group(1))
+        if target:
+            return Shortcut(
+                tool="inspect_container",
+                arguments={"target": target},
+                label="shortcut:inspect",
+            )
+
+    # Search: "find containers named flink" / "containers named flink"
+    search = re.fullmatch(
+        r"(?:please\s+)?(?:find|search(?:\s+for)?|show|list)?\s*"
+        r"containers?\s+(?:named|with\s+name|called)\s+([a-z0-9][\w.-]*)",
+        lower,
+    )
+    if search:
+        return Shortcut(
+            tool="search_containers",
+            arguments={"keyword": search.group(1), "running_only": False},
+            label="shortcut:search",
+        )
+
+    # Uptime-focused list
+    if re.fullmatch(
+        r"(?:please\s+)?(?:show|list|get|pull)?\s*"
+        r"(?:me\s+)?(?:the\s+)?uptime\s+(?:of\s+)?(?:my\s+|the\s+)?containers?",
+        lower,
+    ) or re.fullmatch(
+        r"(?:please\s+)?(?:show|list|get|pull)?\s*"
+        r"(?:me\s+)?(?:the\s+)?containers?\s+uptime",
+        lower,
+    ):
+        args = {"all_containers": False}
+        columns = parse_columns_from_text(text)
+        if columns:
+            args["columns"] = columns
+        return Shortcut(tool="list_uptime", arguments=args, label="shortcut:uptime")
+
+    # List containers (running / all) — including column subsets
+    list_match = re.fullmatch(
+        r"(?:please\s+)?(?:can\s+you\s+)?(?:show|list|get|pull|display)?\s*"
+        r"(?:me\s+)?(?:the\s+)?"
+        r"(?:only\s+[\w\s,/]+?\s+of\s+)?"  # "only name and uptime of"
+        r"(?:all\s+|running\s+)?"
+        r"(?:my\s+|the\s+)?containers?"
+        r"(?:\s+that\s+are\s+running)?"
+        r"(?:\s+please)?",
+        lower,
+    )
+    if list_match or _is_column_list_request(lower):
+        all_containers = bool(
+            re.search(r"\ball\b", lower)
+            and not re.search(r"\brunning\b", lower)
+        )
+        # Explicit running wins over all
+        if re.search(r"\brunning\b", lower):
+            all_containers = False
+        args = {"all_containers": all_containers}
+        columns = parse_columns_from_text(text)
+        if columns:
+            args["columns"] = columns
+        # Prefer list_uptime when uptime is the only extra focus beyond name
+        if columns and set(columns) <= {"name", "uptime"} and "uptime" in columns:
+            return Shortcut(
+                tool="list_uptime",
+                arguments=args,
+                label="shortcut:list",
+            )
+        return Shortcut(
+            tool="list_containers",
+            arguments=args,
+            label="shortcut:list",
+        )
+
+    return None
+
+
+def _is_column_list_request(lower: str) -> bool:
+    """Catch 'only name and uptime of running containers' style asks."""
+    return bool(
+        re.search(r"\bonly\b.+\b(name|uptime|status|image|id|restarts)\b", lower)
+        and re.search(r"\bcontainers?\b", lower)
+    )
+
+
+def _clean_target(raw: str) -> str:
+    text = raw.strip(" .")
+    text = re.sub(r"^(container\s+)?(named\s+|called\s+)?", "", text)
+    text = re.sub(r"\s+(container|please)$", "", text)
+    return text.strip(" .")
+
+
+def _looks_like_question(text: str) -> bool:
+    return "?" in text or bool(_NEEDS_LLM.search(text))

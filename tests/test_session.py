@@ -66,7 +66,6 @@ def test_session_follow_up_uses_history_and_focus():
                     )
                 ],
             ),
-            ChatMessage(role="assistant", content="saien-backend-api is running."),
             ChatMessage(
                 role="assistant",
                 tool_calls=[
@@ -77,16 +76,17 @@ def test_session_follow_up_uses_history_and_focus():
                     )
                 ],
             ),
-            ChatMessage(role="assistant", content="Here are the logs."),
         ]
     )
     session = ChatSession(llm=llm, client=client)
     first = session.ask("inspect saien-backend-api")
     assert session.focus_container == "saien-backend-api"
-    assert "running" in first.answer
+    assert first.presentation is not None
+    assert first.presentation["kind"] == "inspect"
 
     second = session.ask("show its last 25 log lines")
-    assert second.answer == "Here are the logs."
+    assert second.presentation is not None
+    assert second.presentation["kind"] == "logs"
     # follow-up user message should include focus context
     user_msgs = [m.content for m in session.messages if m.role == "user"]
     assert any("focused container is 'saien-backend-api'" in (c or "") for c in user_msgs)
@@ -107,4 +107,5 @@ def test_run_agent_history_does_not_reset_system():
     )
     result = run_agent("list", llm=llm, client=client, history=history)
     assert result.messages[0].content == "sys"
-    assert result.answer == "one"
+    assert result.presentation is not None
+    assert "Showing" in result.answer
