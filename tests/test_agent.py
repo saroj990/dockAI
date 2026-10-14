@@ -185,6 +185,51 @@ def test_agent_rejects_tool_json_dump_and_recovers():
     assert any(r["result"].get("ok") for r in result.tool_results)
 
 
+def test_agent_nudges_text_only_docker_answer_without_tools():
+    """Model must not answer logs/inspect from chat memory in the same turn."""
+    client = MagicMock()
+    container = make_container(name="saien-backend-api", logs=b"ok\n")
+    client.containers.list.return_value = [container]
+    history = [
+        ChatMessage(role="system", content="sys"),
+        ChatMessage(role="user", content="inspect missing"),
+        ChatMessage(
+            role="assistant",
+            content="The container was not found.",
+        ),
+    ]
+    llm = ScriptedLLM(
+        [
+            ChatMessage(
+                role="assistant",
+                content="That container still does not exist.",
+            ),
+            ChatMessage(
+                role="assistant",
+                tool_calls=[
+                    ToolCall(
+                        id="1",
+                        name="get_container_logs",
+                        arguments={"target": "saien-backend-api", "tail": 50},
+                    )
+                ],
+            ),
+        ]
+    )
+    result = run_agent(
+        "can we dig into the logs for saien backend api",
+        llm=llm,
+        client=client,
+        history=history,
+    )
+    assert result.presentation is not None
+    assert result.presentation["kind"] == "logs"
+    assert any(
+        r["tool"] == "get_container_logs" and r["result"].get("ok")
+        for r in result.tool_results
+    )
+
+
 def test_agent_max_turns_uses_last_tool_error():
     client = MagicMock()
     llm = ScriptedLLM(

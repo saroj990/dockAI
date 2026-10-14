@@ -53,6 +53,21 @@ def test_shortcut_stop():
     assert s.arguments["target"] == "api-server"
 
 
+def test_shortcut_polite_restart_with_name():
+    s = match_shortcut("can you restart container with name saien-backend-api")
+    assert s is not None
+    assert s.tool == "restart_container"
+    assert s.arguments["target"] == "saien-backend-api"
+
+
+def test_shortcut_logs_for_last_n_lines():
+    s = match_shortcut("saien backend api logs for last 150 lines")
+    assert s is not None
+    assert s.tool == "get_container_logs"
+    assert s.arguments["target"] == "saien backend api"
+    assert s.arguments["tail"] == 150
+
+
 def test_shortcut_skips_troubleshooting():
     assert match_shortcut("why is my container restarting?") is None
     assert match_shortcut("what could be wrong with api-server?") is None
