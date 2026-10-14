@@ -19,7 +19,7 @@ from dockai.agent.registry import (
     ollama_tool_schemas,
 )
 from dockai.agent.scope import apply_list_scope
-from dockai.agent.shortcuts import match_shortcut
+from dockai.agent.shortcuts import match_shortcut, needs_docker_tool
 from dockai.llm.base import ChatMessage, LLMProvider
 from dockai.present import try_table_first
 
@@ -28,6 +28,9 @@ Use only the provided tools for container facts. Never invent container IDs, nam
 statuses, log lines, timestamps, or success/failure.
 If a tool returns ok=false, call the same tool again with corrected arguments, or
 briefly explain the error. Never print raw tool-call JSON to the user.
+Never claim a container is missing, running, stopped, or that logs were fetched
+unless a tool in this same turn returned that fact. Earlier turns may be wrong
+after the user fixes a name or retries — always call a tool again.
 Pass JSON types correctly: integers (25) and booleans (true/false), not strings.
 Prefer concise answers. Use tables when the user asks for tabular output.
 When the user asks for specific columns (e.g. only name and uptime), pass columns
@@ -63,6 +66,22 @@ _NUDGE = (
     "JSON types (tail as integer, full as boolean), then answer the user clearly."
 )
 
+_NUDGE_DOCKER = (
+    "You must call a Docker tool in this turn before answering. Do not reuse "
+    "container status or errors from earlier messages — the user may have "
+    "corrected the name. Call get_container_logs, inspect_container, "
+    "restart_container, or the appropriate list/search tool, then answer."
+)
+
+_STALE_DOCKER_CLAIM_RE = re.compile(
+    r"\b("
+    r"not\s+found|does\s+not\s+exist|doesn't\s+exist|no\s+container|"
+    r"could\s+not\s+find|unable\s+to\s+find|cannot\s+find|can't\s+find|"
+    r"missing\s+container|container\s+is\s+(?:not\s+)?(?:running|stopped|exited)"
+    r")\b",
+    re.IGNORECASE,
+)
+
 _TOOL_DUMP_RE = re.compile(
     r'(\{[^{}]*"name"\s*:\s*"[a-z_]+"[^{}]*"parameters"\s*:)|'
     r'(\{[^{}]*"parameters"\s*:\s*\{[^{}]*"target")',
@@ -82,6 +101,20 @@ class AgentResult:
     timings: list[tuple[str, float]] = field(default_factory=list)
     # When set, CLI renders Rich output from Docker and skips LLM narration.
     presentation: dict[str, Any] | None = None
+
+
+def _should_nudge_missing_docker_call(
+    user_text: str,
+    *,
+    focus_container: str | None,
+    collected: list[dict[str, Any]],
+    answer: str,
+) -> bool:
+    if collected:
+        return False
+    if needs_docker_tool(user_text, focus_container=focus_container):
+        return True
+    return bool(_STALE_DOCKER_CLAIM_RE.search(answer or ""))
 
 
 def _looks_like_tool_dump(text: str) -> bool:
@@ -361,6 +394,16 @@ def run_agent(
         if _looks_like_tool_dump(answer):
             progress("Retrying with a cleaner tool call…")
             messages.append(ChatMessage(role="user", content=_NUDGE))
+            continue
+
+        if _should_nudge_missing_docker_call(
+            user_text,
+            focus_container=focus_container,
+            collected=collected,
+            answer=answer,
+        ):
+            progress("Model answered without calling Docker — retrying with a tool…")
+            messages.append(ChatMessage(role="user", content=_NUDGE_DOCKER))
             continue
 
         progress("Almost done — preparing your answer…")

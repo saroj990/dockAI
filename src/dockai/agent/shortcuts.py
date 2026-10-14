@@ -66,9 +66,11 @@ def match_shortcut(
                 label="shortcut:logs",
             )
 
-    # Mutations: "stop api-server" / "restart my-app"
+    # Mutations: "stop api-server" / "can you restart container with name my-app"
     mut = re.fullmatch(
-        r"(?:please\s+)?(start|stop|restart)\s+(?:container\s+)?(?:named\s+|called\s+)?(.+)",
+        r"(?:(?:can\s+you|could\s+you|please)\s+)?"
+        r"(start|stop|restart)\s+(?:the\s+)?(?:container\s+)?"
+        r"(?:(?:with\s+)?name\s+|named\s+|called\s+)?(.+)",
         lower,
     )
     if mut:
@@ -212,6 +214,41 @@ def match_shortcut(
         )
 
     return None
+
+
+def needs_docker_tool(
+    user_text: str,
+    *,
+    focus_container: str | None = None,
+) -> bool:
+    """
+    True when this user turn should call a Docker tool (not answer from chat memory).
+
+    Conservative: troubleshooting / explain asks return False.
+    """
+    if match_shortcut(user_text, focus_container=focus_container) is not None:
+        return True
+    text = normalize_user_text(user_text)
+    if not text or _NEEDS_LLM.search(text):
+        return False
+    lower = text.lower()
+    if re.search(
+        r"\b(?:can\s+you|could\s+you|please)\s+"
+        r"(?:restart|start|stop|inspect)\b",
+        lower,
+    ):
+        return True
+    if re.search(r"\blogs?\b", lower) and re.search(
+        r"\b(?:for|of|from|last|lines?|show|get|fetch|pull|dig)\b",
+        lower,
+    ):
+        return True
+    if re.search(r"\b(?:inspect|uptime)\b", lower) and re.search(
+        r"\bcontainer",
+        lower,
+    ):
+        return True
+    return bool(re.search(r"\b(?:list|show|pull|get)\b.+\bcontainers?\b", lower))
 
 
 def _is_column_list_request(lower: str) -> bool:
