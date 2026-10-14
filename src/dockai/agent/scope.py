@@ -5,6 +5,16 @@ from __future__ import annotations
 import re
 from typing import Any
 
+# Common typos: runnning, runing → running (before status detection).
+_RUNNING_TYPO = re.compile(r"\brun+ing\b", re.IGNORECASE)
+
+
+def normalize_user_text(user_text: str) -> str:
+    """Collapse whitespace and fix high-confidence status typos."""
+    text = " ".join((user_text or "").strip().split())
+    return _RUNNING_TYPO.sub("running", text)
+
+
 # Explicit "show everything" (no status filter).
 _WANTS_ALL_EXPLICIT = re.compile(
     r"\b("
@@ -58,7 +68,7 @@ def detect_status_filter(user_text: str) -> str | None:
 
     None means no status filter (running-default or explicit all).
     """
-    text = user_text or ""
+    text = normalize_user_text(user_text)
     # "all containers" / "including exited" → no status filter
     if _WANTS_ALL_EXPLICIT.search(text) and not re.search(
         r"\ball\s+running\b", text, re.IGNORECASE
@@ -79,7 +89,7 @@ def detect_status_filter(user_text: str) -> str | None:
 
 def wants_all_containers(user_text: str) -> bool:
     """True when Docker must be queried with all=True (full list or non-running status)."""
-    text = user_text or ""
+    text = normalize_user_text(user_text)
     if re.search(r"\ball\s+running\b", text, re.IGNORECASE):
         return False
     status = detect_status_filter(text)
@@ -109,10 +119,11 @@ def apply_list_scope(
     if tool_name not in _LIST_SCOPE_TOOLS:
         return args
 
-    status = detect_status_filter(user_text)
-    explicit_all = bool(_WANTS_ALL_EXPLICIT.search(user_text or "")) and (
+    text = normalize_user_text(user_text)
+    status = detect_status_filter(text)
+    explicit_all = bool(_WANTS_ALL_EXPLICIT.search(text)) and (
         status is None
-        and not re.search(r"\ball\s+running\b", user_text or "", re.IGNORECASE)
+        and not re.search(r"\ball\s+running\b", text, re.IGNORECASE)
     )
 
     if status == "running":

@@ -139,66 +139,173 @@ Completed in 9.2s
 
 ---
 
-## Day-to-day usage
+## Features
+
+Activate the venv first (`source .venv/bin/activate`). Below: what dockai can do, with examples.
+
+### Direct CLI (no LLM)
+
+Fast path — talks to Docker only.
 
 ```bash
-cd /path/to/dockAI
-source .venv/bin/activate
-
-# Direct commands (no LLM)
-dockai containers
-dockai containers --all
-dockai logs <name> -n 25
-dockai search flink
+dockai containers                 # running only
+dockai containers --all           # include stopped/exited
 dockai uptime
-dockai inspect <name>
-dockai stop <name>              # confirms, then applies
-dockai start <name>
-dockai restart <name>
-dockai config                   # show resolved settings
+dockai uptime --all
+dockai search flink
+dockai search flink --running-only
+dockai inspect timescaledb
+dockai logs timescaledb           # last 100 lines
+dockai logs timescaledb -n 25
+dockai logs timescaledb --full
+dockai start api-server           # proposes, then confirms
+dockai stop api-server
+dockai restart api-server
+dockai config                     # resolved host/model/timeouts
+dockai -v containers              # diagnostic tool logs
 ```
 
-### Natural language
+One-shot NL without entering chat:
 
-**Fast NL shortcuts** (skip Ollama when the phrase is clear):
+```bash
+dockai ask "show running containers"
+dockai "show running containers"          # same as ask when given a prompt
+dockai ask --model qwen2.5:3b "list uptime"
+```
+
+### Interactive chat
+
+```bash
+dockai chat
+```
+
+Follow-ups stay in one session (focused container, pending confirmations). Type `exit` to quit.
+
+```text
+You: show running containers
+You: only name and uptime
+You: show its last 25 log lines    # uses focused container when exactly one is in focus
+You: stop that container           # still asks for confirmation
+```
+
+### List scope (running / all / exited / stopped)
+
+Server-side intent + shortcuts enforce scope so the table matches what you asked for:
+
+```bash
+dockai "show running containers"           # running only
+dockai "show me only running containers"
+dockai "show me exited containers"         # exited only (not running)
+dockai "show stopped containers"           # exited + dead
+dockai "list all containers"               # full inventory
+dockai "uptime of running containers"
+```
+
+`all_containers=true` alone is not “exited only” — dockai applies a `status` filter when you ask for exited/stopped/dead.
+
+### Columns and table-first
+
+Supported columns: `id`, `name`, `status`, `image`, `uptime`, `restarts`.
+
+```bash
+dockai "only name and uptime of running containers"
+dockai "show ID, status, and name in a table"
+dockai "can you pull only name and uptime of running containers"
+```
+
+After a successful list/uptime/search/logs/inspect tool call, dockai **table-first** renders Docker data and skips a second Ollama summary.
+
+### NL shortcuts (skip Ollama)
+
+Clear phrases map straight to a tool. Timings show `shortcut:…` instead of `ollama #1`.
 
 ```bash
 dockai "show running containers"
-dockai "can you pull only name and uptime of running containers"
+dockai "show me exited containers"
+dockai "show me uptime of running containers"
 dockai "show last 25 lines of timescaledb logs"
+dockai "logs for timescaledb"
 dockai "find containers named postgis"
 dockai "inspect timescaledb"
-dockai "stop api-server"          # still asks for confirmation
+dockai "stop api-server"              # still confirms before apply
 ```
+
+Common typos like `runnning` → `running` are normalized before matching.
 
 **Still uses Ollama** (needs interpretation):
 
 ```bash
 dockai "why is my container restarting?"
 dockai "what looks unhealthy?"
+dockai "which of these look stuck?"
 ```
 
-**Chat** (shortcuts + columns + focus work in-session):
+### Name resolution (spaces, hyphens, typos)
+
+Resolve accepts flexible names for inspect / logs / start / stop / restart:
+
+| You type (CLI or model `target`) | Behavior |
+|----------------------------------|----------|
+| `saien-backend-api` | Exact match |
+| `saien backend api` | Separators ignored (`saienbackendapi`) |
+| `saen-backend-api` / `saie-backend-api` | Close typo → one clear match is used |
+| Several near matches | Ambiguous — lists candidates; you choose |
+| Short junk (`apo`) / unrelated (`redis-cache`) | Not found (no unsafe guess) |
+| Hex-like IDs | Exact ID match only — never fuzzy to a name |
+
+Examples:
 
 ```bash
-dockai chat
-# You: show running containers
-# You: only name and uptime
-# You: show its last 25 log lines    # uses focused container when unambiguous
+dockai inspect "saien backend api"
+dockai logs saen-backend-api -n 25
+dockai "show logs for saen-backend-api"
 ```
+
+Fuzzy matching is conservative: min name length, max edit distance 2, similarity threshold, and **no auto-pick** when two containers are equally close.
+
+### Session focus
+
+When a turn resolves to exactly one container, chat remembers it for follow-ups:
+
+```text
+You: inspect timescaledb
+You: show its last 25 log lines
+```
+
+If several containers were listed, focus clears and dockai will ask which one you mean.
+
+### Safe mutations
 
 ```bash
-dockai -v "show running containers"   # tool diagnostics
+dockai stop api-server
+# → shows name / id / status / impact
+# → Confirm? only then calls Docker
 ```
 
-### Columns
+Same for `start` and `restart` via CLI or NL (`dockai "stop api-server"`).
 
-Ask for a subset and table-first / shortcuts will render only those fields (`id`, `name`, `status`, `image`, `uptime`, `restarts`):
+### Restricted actions
+
+These are refused clearly (**Not supported**) — dockai will not substitute `stop` for delete:
 
 ```bash
-dockai "only name and uptime of running containers"
-dockai "show ID, status, and name in a table"
+dockai "delete the api-server container"
+dockai "docker system prune"
+dockai "quit Docker Desktop"
 ```
+
+### Remote Ollama (optional)
+
+Point `[ollama] host` at another machine (e.g. GPU box). Use **one** `model =` line — TOML cannot define the same key twice.
+
+```toml
+[ollama]
+host = "http://100.x.x.x:11434"
+model = "qwen2.5:7b"
+timeout = 120
+```
+
+Docker still uses **your local** Docker Engine unless you change the Docker socket separately.
 
 ---
 
@@ -210,6 +317,7 @@ dockai "show ID, status, and name in a table"
 | `Docker Engine is unavailable` | Docker not running / no socket permission | Start Docker Desktop; re-check `docker ps` |
 | Ollama connection errors | Ollama not running or wrong host | `ollama serve`; set `host` in `dockai.toml` |
 | Model not found / bad tool calls | Config model ≠ pulled model | `ollama list` and match `[ollama] model` exactly |
+| `TOMLDecodeError: Cannot overwrite a value` | Duplicate key (e.g. two `model =` lines) | Keep a single `model` / `host` under `[ollama]` |
 | `python: command not found` | Only `python3` on PATH | Use `python3 -m venv .venv` |
 | Wrong Python (3.9/3.10) | Old system Python | Install 3.11+ and recreate `.venv` |
 | Slow answers (10–20s+) | LLM path / large model | Prefer shortcut phrases or `dockai containers`; use `qwen2.5:3b` |
@@ -222,6 +330,7 @@ dockai "show ID, status, and name in a table"
 source .venv/bin/activate
 pytest                  # unit + acceptance (mocked Docker)
 pytest -m integration   # disposable alpine container (needs Docker)
+pytest -k typo -q       # fuzzy name-resolution tests
 ```
 
 ---
@@ -231,7 +340,7 @@ pytest -m integration   # disposable alpine container (needs Docker)
 | Path | Typical speed | When |
 |------|---------------|------|
 | Direct CLI (`dockai containers`) | ~docker speed | You know the command |
-| **NL shortcut** | ~100–300 ms | Common phrases (see above) |
+| **NL shortcut** | ~100–300 ms | Common phrases (see Features) |
 | Table-first after Ollama | ~one model call | LLM picks tool; skip summary |
 | Full LLM | many seconds | Troubleshooting / vague asks |
 
@@ -239,6 +348,7 @@ pytest -m integration   # disposable alpine container (needs Docker)
 - NL cost is mostly **Ollama**, not Docker — unless a shortcut matches (`shortcut:list` / `shortcut:logs` in timings).
 - **Table-first:** list / uptime / search / logs / inspect skip the second Ollama summary.
 - **Column intent:** “only name and uptime” is applied to the Rich table (not a fixed full column set).
+- **List scope:** running / exited / stopped filters are enforced even if the model passes the wrong `all_containers` flag.
 
 ---
 
@@ -248,6 +358,7 @@ pytest -m integration   # disposable alpine container (needs Docker)
 - start / stop / restart require explicit confirmation.
 - Facts come from Docker, not model invention.
 - delete / prune / Docker Desktop control → clear **Not supported** refusal.
+- Name typos: close-match only with strict thresholds; ambiguous → ask; IDs never fuzzy-matched to names.
 
 ---
 

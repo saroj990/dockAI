@@ -22,6 +22,15 @@ def test_shortcut_name_and_uptime():
     assert s.arguments.get("all_containers") is False
 
 
+def test_shortcut_uptime_of_running_with_typo():
+    """'runnning' must not fall through to Ollama for a plain uptime list."""
+    s = match_shortcut("show me uptime of runnning containers")
+    assert s is not None
+    assert s.tool == "list_uptime"
+    assert s.arguments.get("all_containers") is False
+    assert "uptime" in (s.arguments.get("columns") or [])
+
+
 def test_shortcut_logs_with_tail():
     s = match_shortcut("show last 25 lines of api-server logs")
     assert s is not None

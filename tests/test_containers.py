@@ -82,6 +82,67 @@ def test_resolve_not_found(mock_client):
         resolve_container(mock_client, "nope")
 
 
+def test_resolve_typo_single_close_match(mock_client):
+    mock_client.containers.list.return_value = [
+        make_container(cid="b" * 64, name="saien-backend-api"),
+        make_container(cid="c" * 64, name="nginx"),
+    ]
+    container = resolve_container(mock_client, "saen-backend-api")
+    assert _primary_name(container) == "saien-backend-api"
+
+
+def test_resolve_typo_alternate_spellings(mock_client):
+    mock_client.containers.list.return_value = [
+        make_container(cid="b" * 64, name="saien-backend-api"),
+    ]
+    for target in ("saie-backend-api", "saienn-backend-api", "saen backend api"):
+        container = resolve_container(mock_client, target)
+        assert _primary_name(container) == "saien-backend-api"
+
+
+def test_resolve_typo_unrelated_still_not_found(mock_client):
+    mock_client.containers.list.return_value = [
+        make_container(cid="b" * 64, name="saien-backend-api"),
+    ]
+    mock_client.containers.get.side_effect = NotFound("missing")
+    with pytest.raises(ContainerNotFoundError):
+        resolve_container(mock_client, "redis-cache")
+
+
+def test_resolve_typo_short_target_not_fuzzy(mock_client):
+    """Short targets must not fuzzy-match (safety)."""
+    mock_client.containers.list.return_value = [
+        make_container(cid="b" * 64, name="api-server"),
+        make_container(cid="c" * 64, name="app-server"),
+    ]
+    mock_client.containers.get.side_effect = NotFound("missing")
+    # "apo" is short + not a substring of either after normalization path fails
+    with pytest.raises(ContainerNotFoundError):
+        resolve_container(mock_client, "apo")
+
+
+def test_resolve_typo_hex_id_not_fuzzy(mock_client):
+    """Hex-like targets are treated as IDs — never fuzzy to a name."""
+    real_id = "abcdef0123456789" + "0" * 48
+    mock_client.containers.list.return_value = [
+        make_container(cid=real_id, name="saien-backend-api"),
+    ]
+    mock_client.containers.get.side_effect = NotFound("missing")
+    # Near-miss hex that is not a prefix of real_id
+    with pytest.raises(ContainerNotFoundError):
+        resolve_container(mock_client, "abcdef0123456788" + "0" * 48)
+
+
+def test_resolve_typo_multiple_close_is_ambiguous(mock_client):
+    mock_client.containers.list.return_value = [
+        make_container(cid="b" * 64, name="worker-service-a"),
+        make_container(cid="c" * 64, name="worker-service-b"),
+    ]
+    with pytest.raises(AmbiguousContainerError) as exc:
+        resolve_container(mock_client, "worker-service-x")
+    assert len(exc.value.matches) >= 2
+
+
 def test_inspect_container(mock_client):
     container = make_container(restart_count=3, restarting=True)
     mock_client.containers.list.return_value = [container]
