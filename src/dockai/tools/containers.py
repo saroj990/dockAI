@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from difflib import SequenceMatcher
 from typing import Any
 
 import docker
@@ -26,6 +28,12 @@ STATUS_FILTERS: dict[str, frozenset[str]] = {
     "stopped": frozenset({"exited", "dead"}),
     "dead": frozenset({"dead"}),
 }
+
+# Close-match (typo) resolution — conservative to avoid wrong container ops.
+_FUZZY_MIN_NORM_LEN = 6
+_FUZZY_MAX_EDIT_DISTANCE = 2
+_FUZZY_MIN_RATIO = 0.84
+_HEX_ID_RE = re.compile(r"^[0-9a-f]{8,64}$")
 
 
 def _short_id(container_id: str) -> str:
@@ -110,6 +118,95 @@ def _normalize_name(value: str) -> str:
     return "".join(ch for ch in value.lower() if ch.isalnum())
 
 
+def _looks_like_container_id(target: str) -> bool:
+    """True for hex-like IDs — never fuzzy-match these."""
+    return bool(_HEX_ID_RE.fullmatch(target.strip().lower()))
+
+
+def _edit_distance(a: str, b: str, *, max_dist: int) -> int | None:
+    """
+    Levenshtein distance with early exit.
+
+    Returns None when distance would exceed max_dist (or length gap alone does).
+    """
+    if a == b:
+        return 0
+    if abs(len(a) - len(b)) > max_dist:
+        return None
+    # Ensure a is the shorter string for fewer rows.
+    if len(a) > len(b):
+        a, b = b, a
+    prev = list(range(len(a) + 1))
+    for i, ch_b in enumerate(b, start=1):
+        curr = [i]
+        row_min = i
+        for j, ch_a in enumerate(a, start=1):
+            ins = curr[j - 1] + 1
+            delete = prev[j] + 1
+            sub = prev[j - 1] + (0 if ch_a == ch_b else 1)
+            val = min(ins, delete, sub)
+            curr.append(val)
+            if val < row_min:
+                row_min = val
+        if row_min > max_dist:
+            return None
+        prev = curr
+    dist = prev[-1]
+    return dist if dist <= max_dist else None
+
+
+def _fuzzy_close_matches(
+    containers: list[Container],
+    *,
+    target: str,
+    target_n: str,
+) -> list[Container]:
+    """
+    Name-only typo candidates after exact/partial matching failed.
+
+    Safety: no ID fuzzing, min normalized length, max edit distance, min ratio.
+    Multiple survivors → caller treats as ambiguous (never silent pick).
+    """
+    if _looks_like_container_id(target):
+        return []
+    if len(target_n) < _FUZZY_MIN_NORM_LEN:
+        return []
+
+    scored: list[tuple[float, int, Container]] = []
+    for container in containers:
+        name = _primary_name(container)
+        name_n = _normalize_name(name)
+        if len(name_n) < _FUZZY_MIN_NORM_LEN:
+            continue
+        dist = _edit_distance(
+            target_n, name_n, max_dist=_FUZZY_MAX_EDIT_DISTANCE
+        )
+        if dist is None:
+            continue
+        ratio = SequenceMatcher(None, target_n, name_n).ratio()
+        if ratio < _FUZZY_MIN_RATIO:
+            continue
+        scored.append((ratio, dist, container))
+
+    if not scored:
+        return []
+    # Prefer higher ratio, then lower edit distance.
+    scored.sort(key=lambda item: (-item[0], item[1], _primary_name(item[2])))
+    # Only keep those within the same quality band as the best match so a
+    # distant second does not inflate ambiguity noise — but if two are both
+    # above threshold, return both (safer than auto-picking).
+    best_ratio, best_dist, _ = scored[0]
+    close = [
+        c
+        for ratio, dist, c in scored
+        if ratio >= _FUZZY_MIN_RATIO
+        and dist <= _FUZZY_MAX_EDIT_DISTANCE
+        and (best_ratio - ratio) <= 0.05
+        and dist <= best_dist + 1
+    ]
+    return close
+
+
 def _match_candidates(
     client: docker.DockerClient,
     target: str,
@@ -140,7 +237,13 @@ def _match_candidates(
             partial.append(container)
         elif len(target_n) >= 3 and target_n in name_n:
             partial_norm.append(container)
-    return exact or exact_norm or partial or partial_norm
+
+    strict = exact or exact_norm or partial or partial_norm
+    if strict:
+        return strict
+    return _fuzzy_close_matches(
+        containers, target=target, target_n=target_n
+    )
 
 
 def resolve_container(
@@ -149,7 +252,7 @@ def resolve_container(
     *,
     all_containers: bool = True,
 ) -> Container:
-    """Resolve a name/ID to exactly one container."""
+    """Resolve a name/ID to exactly one container (incl. conservative typo match)."""
     matches = _match_candidates(client, target, all_containers=all_containers)
     if not matches:
         # Fall back to Docker's native lookup for exact IDs/names.
