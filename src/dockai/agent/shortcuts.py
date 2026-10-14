@@ -6,7 +6,11 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from dockai.agent.scope import apply_list_scope, detect_status_filter
+from dockai.agent.scope import (
+    apply_list_scope,
+    detect_status_filter,
+    normalize_user_text,
+)
 from dockai.columns import parse_columns_from_text
 
 # If present, the request likely needs real interpretation — do not shortcut.
@@ -37,7 +41,7 @@ def match_shortcut(
 
     Conservative: prefer falling through to Ollama over a wrong shortcut.
     """
-    text = " ".join((user_text or "").strip().split())
+    text = normalize_user_text(user_text)
     if not text or _NEEDS_LLM.search(text):
         return None
 
@@ -145,20 +149,24 @@ def match_shortcut(
             label="shortcut:search",
         )
 
-    # Uptime-focused list
+    # Uptime-focused list (optional status word between "of" and "containers")
     if re.fullmatch(
         r"(?:please\s+)?(?:show|list|get|pull)?\s*"
-        r"(?:me\s+)?(?:the\s+)?uptime\s+(?:of\s+)?(?:my\s+|the\s+)?containers?",
+        r"(?:me\s+)?(?:the\s+)?uptime\s+(?:of\s+)?"
+        r"(?:(?:all|running|exited|stopped|dead)\s+)?"
+        r"(?:my\s+|the\s+)?containers?",
         lower,
     ) or re.fullmatch(
         r"(?:please\s+)?(?:show|list|get|pull)?\s*"
         r"(?:me\s+)?(?:the\s+)?containers?\s+uptime",
         lower,
     ):
-        args = {"all_containers": False}
+        args = apply_list_scope(text, "list_uptime", {"all_containers": False})
         columns = parse_columns_from_text(text)
         if columns:
             args["columns"] = columns
+        else:
+            args["columns"] = ["name", "uptime"]
         return Shortcut(tool="list_uptime", arguments=args, label="shortcut:uptime")
 
     # List containers (running / all / exited / stopped) — including column subsets
