@@ -12,6 +12,7 @@ from dockai.diagnostics import log_tool_call, log_tool_result
 from dockai.errors import DockaiError
 from dockai.tools.containers import (
     DEFAULT_LOG_TAIL,
+    STATUS_FILTERS,
     get_container_logs,
     inspect_container,
     list_containers,
@@ -40,10 +41,36 @@ def _validate_optional_columns(args: dict[str, Any]) -> None:
         )
 
 
+def _optional_status(args: dict[str, Any]) -> str | None:
+    if "status" not in args or args["status"] is None:
+        return None
+    value = args["status"]
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("'status' must be a non-empty string.")
+    status = value.strip().lower()
+    if status not in STATUS_FILTERS:
+        raise ValueError(
+            f"'status' must be one of: {', '.join(sorted(STATUS_FILTERS))}."
+        )
+    return status
+
+
+_STATUS_PARAM = {
+    "type": "string",
+    "description": (
+        "Optional status filter: running, exited, stopped, or dead. "
+        "Use exited/stopped/dead when the user asks for those containers "
+        "(requires all_containers=true). stopped matches exited+dead."
+    ),
+}
+
+
 def _list_containers_result(client: Any, args: dict[str, Any]) -> Any:
     _validate_optional_columns(args)
     return list_containers(
-        client, all_containers=_require_bool(args, "all_containers", False)
+        client,
+        all_containers=_require_bool(args, "all_containers", False),
+        status=_optional_status(args),
     )
 
 
@@ -51,7 +78,9 @@ def _list_uptime_result(client: Any, args: dict[str, Any]) -> Any:
     _validate_optional_columns(args)
     return {
         "containers": list_containers(
-            client, all_containers=_require_bool(args, "all_containers", False)
+            client,
+            all_containers=_require_bool(args, "all_containers", False),
+            status=_optional_status(args),
         )
     }
 
@@ -62,6 +91,7 @@ def _search_containers_result(client: Any, args: dict[str, Any]) -> Any:
         client,
         _require_str(args, "keyword"),
         running_only=_require_bool(args, "running_only", False),
+        status=_optional_status(args),
     )
 
 MUTATING_TOOLS = frozenset(
@@ -132,9 +162,12 @@ def build_registry() -> dict[str, ToolSpec]:
         "list_containers": ToolSpec(
             name="list_containers",
             description=(
-                "List Docker containers. Defaults to running only. "
-                "When the user asks for specific columns (e.g. name and uptime), "
-                "pass them in columns."
+                "List Docker containers. Defaults to running only "
+                "(all_containers=false). For 'exited/stopped/dead containers', "
+                "set all_containers=true and status=exited|stopped|dead "
+                "(otherwise running containers are included). "
+                "When the user asks for specific columns, pass them in columns. "
+                "Do not use logs/inspect for a plain list."
             ),
             parameters={
                 "type": "object",
@@ -142,10 +175,13 @@ def build_registry() -> dict[str, ToolSpec]:
                     "all_containers": {
                         "type": "boolean",
                         "description": (
-                            "If true, include stopped containers. "
-                            "Keep false when the user asks for running containers only."
+                            "If true, include non-running containers in the Docker "
+                            "query. Keep false for running-only. Set true for "
+                            "all/stopped/exited asks (pair with status when "
+                            "filtering to exited/stopped/dead)."
                         ),
                     },
+                    "status": _STATUS_PARAM,
                     "columns": _COLUMNS_PARAM,
                 },
                 "additionalProperties": False,
@@ -206,8 +242,12 @@ def build_registry() -> dict[str, ToolSpec]:
                     "keyword": {"type": "string", "description": "Name keyword."},
                     "running_only": {
                         "type": "boolean",
-                        "description": "If true, search running containers only.",
+                        "description": (
+                            "If true, search running containers only. "
+                            "Set true when the user asks for running containers."
+                        ),
                     },
+                    "status": _STATUS_PARAM,
                     "columns": _COLUMNS_PARAM,
                 },
                 "required": ["keyword"],
@@ -219,7 +259,9 @@ def build_registry() -> dict[str, ToolSpec]:
             name="list_uptime",
             description=(
                 "List containers with uptime/state derived from Docker start times. "
-                "Pass columns when the user asks for specific fields."
+                "Defaults to running only. For exited/stopped lists, set "
+                "all_containers=true and status accordingly. Pass columns when "
+                "the user asks for specific fields."
             ),
             parameters={
                 "type": "object",
@@ -227,10 +269,12 @@ def build_registry() -> dict[str, ToolSpec]:
                     "all_containers": {
                         "type": "boolean",
                         "description": (
-                            "If true, include stopped containers. "
-                            "Keep false when the user asks for running containers only."
+                            "If true, include non-running containers in the query. "
+                            "Keep false for running-only. Pair with status for "
+                            "exited/stopped/dead filters."
                         ),
                     },
+                    "status": _STATUS_PARAM,
                     "columns": _COLUMNS_PARAM,
                 },
                 "additionalProperties": False,

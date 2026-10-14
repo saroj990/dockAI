@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from dockai.agent.scope import apply_list_scope, detect_status_filter
 from dockai.columns import parse_columns_from_text
 
 # If present, the request likely needs real interpretation — do not shortcut.
@@ -160,26 +161,32 @@ def match_shortcut(
             args["columns"] = columns
         return Shortcut(tool="list_uptime", arguments=args, label="shortcut:uptime")
 
-    # List containers (running / all) — including column subsets
+    # List containers (running / all / exited / stopped) — including column subsets
+    # Also: "show me only running containers" / "show me exited containers"
     list_match = re.fullmatch(
         r"(?:please\s+)?(?:can\s+you\s+)?(?:show|list|get|pull|display)?\s*"
         r"(?:me\s+)?(?:the\s+)?"
         r"(?:only\s+[\w\s,/]+?\s+of\s+)?"  # "only name and uptime of"
-        r"(?:all\s+|running\s+)?"
+        r"(?:only\s+)?"  # "only running containers"
+        r"(?:all\s+|running\s+|exited\s+|stopped\s+|dead\s+)?"
         r"(?:my\s+|the\s+)?containers?"
-        r"(?:\s+that\s+are\s+running)?"
+        r"(?:\s+that\s+are\s+(?:running|exited|stopped|dead))?"
         r"(?:\s+please)?",
         lower,
     )
-    if list_match or _is_column_list_request(lower):
-        all_containers = bool(
-            re.search(r"\ball\b", lower)
-            and not re.search(r"\brunning\b", lower)
+    if list_match or _is_column_list_request(lower) or detect_status_filter(text):
+        # Only treat as a list ask when containers are mentioned (or column list).
+        if not (
+            list_match
+            or _is_column_list_request(lower)
+            or re.search(r"\bcontainers?\b", lower)
+        ):
+            return None
+        args = apply_list_scope(
+            text,
+            "list_containers",
+            {"all_containers": False},
         )
-        # Explicit running wins over all
-        if re.search(r"\brunning\b", lower):
-            all_containers = False
-        args = {"all_containers": all_containers}
         columns = parse_columns_from_text(text)
         if columns:
             args["columns"] = columns
@@ -187,7 +194,7 @@ def match_shortcut(
         if columns and set(columns) <= {"name", "uptime"} and "uptime" in columns:
             return Shortcut(
                 tool="list_uptime",
-                arguments=args,
+                arguments=apply_list_scope(text, "list_uptime", args),
                 label="shortcut:list",
             )
         return Shortcut(
