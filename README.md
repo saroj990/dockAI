@@ -114,22 +114,27 @@ Other workable options: `llama3.1:8b` (higher quality, slower), `gemma3:4b` (fas
 cd /path/to/dockAI
 source .venv/bin/activate
 
-# 1) Docker-only (should be fast, no Ollama needed)
+# 1) Docker-only (fastest — no Ollama)
 dockai containers
 
-# 2) Natural language (needs Ollama + model)
+# 2) NL shortcut (no Ollama; look for shortcut:list in timings)
 dockai "show running containers"
 
 # 3) Interactive
 dockai chat
 ```
 
-Every NL reply prints stage timings, e.g.:
+Stage timings tell you which path ran:
 
 ```text
-Completed in 800 ms
-  · ollama #1: 600 ms
-  · docker list_containers: 150 ms
+# NL shortcut (typical ~100–300 ms)
+Completed in 132 ms
+  · shortcut:list: 108 ms
+
+# LLM path (seconds — model chose the tool)
+Completed in 9.2s
+  · ollama #1: 9.1s
+  · docker list_containers: 128 ms
 ```
 
 ---
@@ -140,7 +145,7 @@ Completed in 800 ms
 cd /path/to/dockAI
 source .venv/bin/activate
 
-# Fast path (no LLM)
+# Direct commands (no LLM)
 dockai containers
 dockai containers --all
 dockai logs <name> -n 25
@@ -150,12 +155,49 @@ dockai inspect <name>
 dockai stop <name>              # confirms, then applies
 dockai start <name>
 dockai restart <name>
+dockai config                   # show resolved settings
+```
 
-# Natural language
+### Natural language
+
+**Fast NL shortcuts** (skip Ollama when the phrase is clear):
+
+```bash
 dockai "show running containers"
-dockai ask "show the last 25 lines of api-server logs"
+dockai "can you pull only name and uptime of running containers"
+dockai "show last 25 lines of timescaledb logs"
+dockai "find containers named postgis"
+dockai "inspect timescaledb"
+dockai "stop api-server"          # still asks for confirmation
+```
+
+**Still uses Ollama** (needs interpretation):
+
+```bash
+dockai "why is my container restarting?"
+dockai "what looks unhealthy?"
+```
+
+**Chat** (shortcuts + columns + focus work in-session):
+
+```bash
 dockai chat
+# You: show running containers
+# You: only name and uptime
+# You: show its last 25 log lines    # uses focused container when unambiguous
+```
+
+```bash
 dockai -v "show running containers"   # tool diagnostics
+```
+
+### Columns
+
+Ask for a subset and table-first / shortcuts will render only those fields (`id`, `name`, `status`, `image`, `uptime`, `restarts`):
+
+```bash
+dockai "only name and uptime of running containers"
+dockai "show ID, status, and name in a table"
 ```
 
 ---
@@ -170,7 +212,7 @@ dockai -v "show running containers"   # tool diagnostics
 | Model not found / bad tool calls | Config model ≠ pulled model | `ollama list` and match `[ollama] model` exactly |
 | `python: command not found` | Only `python3` on PATH | Use `python3 -m venv .venv` |
 | Wrong Python (3.9/3.10) | Old system Python | Install 3.11+ and recreate `.venv` |
-| Slow answers (10–20s+) | Large model + LLM summary | Use `qwen2.5:3b`; prefer `dockai containers` for lists |
+| Slow answers (10–20s+) | LLM path / large model | Prefer shortcut phrases or `dockai containers`; use `qwen2.5:3b` |
 
 ---
 
@@ -186,10 +228,17 @@ pytest -m integration   # disposable alpine container (needs Docker)
 
 ## Performance notes
 
+| Path | Typical speed | When |
+|------|---------------|------|
+| Direct CLI (`dockai containers`) | ~docker speed | You know the command |
+| **NL shortcut** | ~100–300 ms | Common phrases (see above) |
+| Table-first after Ollama | ~one model call | LLM picks tool; skip summary |
+| Full LLM | many seconds | Troubleshooting / vague asks |
+
 - Direct commands ≈ `docker` speed.
-- NL mode cost is mostly **Ollama**, not Docker.
-- **Table-first:** simple list / uptime / search / logs / inspect skip the second LLM summary.
-- **NL shortcuts:** common phrases skip Ollama entirely (timings show `shortcut:list` / `shortcut:logs`). Troubleshooting / vague asks still use the model.
+- NL cost is mostly **Ollama**, not Docker — unless a shortcut matches (`shortcut:list` / `shortcut:logs` in timings).
+- **Table-first:** list / uptime / search / logs / inspect skip the second Ollama summary.
+- **Column intent:** “only name and uptime” is applied to the Rich table (not a fixed full column set).
 
 ---
 
