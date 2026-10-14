@@ -28,6 +28,8 @@ If a tool returns ok=false, call the same tool again with corrected arguments, o
 briefly explain the error. Never print raw tool-call JSON to the user.
 Pass JSON types correctly: integers (25) and booleans (true/false), not strings.
 Prefer concise answers. Use tables when the user asks for tabular output.
+When the user asks for specific columns (e.g. only name and uptime), pass columns
+on list_containers / list_uptime / search_containers.
 For uptime questions, call list_uptime.
 Default log window is the last 100 lines unless the user asks otherwise.
 For follow-ups like "that container" or "its logs", use the session focused container
@@ -287,7 +289,7 @@ def run_agent(
                 return _finish(_format_pending(pending), turn)
 
             # Skip summarization LLM for simple list/logs/search/inspect.
-            direct = try_table_first(batch)
+            direct = try_table_first(batch, user_text=user_text)
             if direct is not None:
                 progress("Rendering Docker results (skipping model summary)…")
                 caption = direct["caption"]

@@ -148,7 +148,11 @@ def print_logs(result: dict[str, Any]) -> None:
         print_info("[dim]Log output was truncated for safety.[/dim]")
 
 
-def print_search(result: dict[str, Any]) -> None:
+def print_search(
+    result: dict[str, Any],
+    *,
+    columns: list[str] | None = None,
+) -> None:
     scope = result["scope"]
     print_info(
         f"Search for [bold]{result['keyword']}[/bold] "
@@ -156,6 +160,6 @@ def print_search(result: dict[str, Any]) -> None:
     )
     print_containers(
         result["matches"],
-        columns=["id", "name", "status", "image", "uptime"],
+        columns=columns or ["id", "name", "status", "image", "uptime"],
         empty_message="No containers matched that keyword.",
     )

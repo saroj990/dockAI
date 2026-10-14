@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 import docker
 
+from dockai.columns import SUPPORTED_COLUMNS, coerce_columns_arg
 from dockai.diagnostics import log_tool_call, log_tool_result
 from dockai.errors import DockaiError
 from dockai.tools.containers import (
@@ -18,6 +19,50 @@ from dockai.tools.containers import (
     search_containers,
 )
 from dockai.tools.lifecycle import Action, propose_action
+
+_COLUMNS_PARAM = {
+    "type": "array",
+    "items": {"type": "string"},
+    "description": (
+        "Optional table columns to display. "
+        f"Allowed: {', '.join(SUPPORTED_COLUMNS)}. "
+        "Use when the user asks for specific fields (e.g. only name and uptime)."
+    ),
+}
+
+
+def _validate_optional_columns(args: dict[str, Any]) -> None:
+    if "columns" not in args or args["columns"] is None:
+        return
+    if coerce_columns_arg(args["columns"]) is None:
+        raise ValueError(
+            f"'columns' must include at least one of: {', '.join(SUPPORTED_COLUMNS)}"
+        )
+
+
+def _list_containers_result(client: Any, args: dict[str, Any]) -> Any:
+    _validate_optional_columns(args)
+    return list_containers(
+        client, all_containers=_require_bool(args, "all_containers", False)
+    )
+
+
+def _list_uptime_result(client: Any, args: dict[str, Any]) -> Any:
+    _validate_optional_columns(args)
+    return {
+        "containers": list_containers(
+            client, all_containers=_require_bool(args, "all_containers", False)
+        )
+    }
+
+
+def _search_containers_result(client: Any, args: dict[str, Any]) -> Any:
+    _validate_optional_columns(args)
+    return search_containers(
+        client,
+        _require_str(args, "keyword"),
+        running_only=_require_bool(args, "running_only", False),
+    )
 
 MUTATING_TOOLS = frozenset(
     {"start_container", "stop_container", "restart_container"}
@@ -86,20 +131,26 @@ def build_registry() -> dict[str, ToolSpec]:
     return {
         "list_containers": ToolSpec(
             name="list_containers",
-            description="List Docker containers. Defaults to running only.",
+            description=(
+                "List Docker containers. Defaults to running only. "
+                "When the user asks for specific columns (e.g. name and uptime), "
+                "pass them in columns."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
                     "all_containers": {
                         "type": "boolean",
-                        "description": "If true, include stopped containers.",
-                    }
+                        "description": (
+                            "If true, include stopped containers. "
+                            "Keep false when the user asks for running containers only."
+                        ),
+                    },
+                    "columns": _COLUMNS_PARAM,
                 },
                 "additionalProperties": False,
             },
-            handler=lambda client, **a: list_containers(
-                client, all_containers=_require_bool(a, "all_containers", False)
-            ),
+            handler=lambda client, **a: _list_containers_result(client, a),
         ),
         "inspect_container": ToolSpec(
             name="inspect_container",
@@ -157,34 +208,34 @@ def build_registry() -> dict[str, ToolSpec]:
                         "type": "boolean",
                         "description": "If true, search running containers only.",
                     },
+                    "columns": _COLUMNS_PARAM,
                 },
                 "required": ["keyword"],
                 "additionalProperties": False,
             },
-            handler=lambda client, **a: search_containers(
-                client,
-                _require_str(a, "keyword"),
-                running_only=_require_bool(a, "running_only", False),
-            ),
+            handler=lambda client, **a: _search_containers_result(client, a),
         ),
         "list_uptime": ToolSpec(
             name="list_uptime",
-            description="List containers with uptime/state derived from Docker start times.",
+            description=(
+                "List containers with uptime/state derived from Docker start times. "
+                "Pass columns when the user asks for specific fields."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
                     "all_containers": {
                         "type": "boolean",
-                        "description": "If true, include stopped containers.",
-                    }
+                        "description": (
+                            "If true, include stopped containers. "
+                            "Keep false when the user asks for running containers only."
+                        ),
+                    },
+                    "columns": _COLUMNS_PARAM,
                 },
                 "additionalProperties": False,
             },
-            handler=lambda client, **a: {
-                "containers": list_containers(
-                    client, all_containers=_require_bool(a, "all_containers", False)
-                )
-            },
+            handler=lambda client, **a: _list_uptime_result(client, a),
         ),
         "list_restarting_containers": ToolSpec(
             name="list_restarting_containers",
