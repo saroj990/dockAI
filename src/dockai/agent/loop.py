@@ -18,6 +18,7 @@ from dockai.agent.registry import (
     execute_tool,
     ollama_tool_schemas,
 )
+from dockai.agent.shortcuts import match_shortcut
 from dockai.llm.base import ChatMessage, LLMProvider
 from dockai.present import try_table_first
 
@@ -249,6 +250,53 @@ def run_agent(
             pending_action=pending,
             timings=list(timings),
             presentation=presentation,
+        )
+
+    # High-confidence phrases skip Ollama entirely.
+    shortcut = match_shortcut(user_text, focus_container=focus_container)
+    if shortcut is not None:
+        progress(f"NL shortcut matched ({shortcut.label}) — skipping Ollama…")
+        t0 = time.perf_counter()
+        result = execute_tool(
+            registry, client, shortcut.tool, shortcut.arguments
+        )
+        timings.append((shortcut.label, time.perf_counter() - t0))
+        item = {
+            "tool": shortcut.tool,
+            "arguments": shortcut.arguments,
+            "result": result,
+        }
+        collected.append(item)
+        messages.append(
+            ChatMessage(
+                role="assistant",
+                content=f"[nl-shortcut] {shortcut.tool}",
+            )
+        )
+        messages.append(
+            ChatMessage(
+                role="tool",
+                name=shortcut.tool,
+                content=json.dumps(result, default=str),
+            )
+        )
+        pending = _pending_from_results(collected)
+        if pending is not None:
+            return _finish(_format_pending(pending), 0)
+        if result.get("ok"):
+            direct = try_table_first([item], user_text=user_text)
+            if direct is not None:
+                messages.append(
+                    ChatMessage(role="assistant", content=direct["caption"])
+                )
+                return _finish(direct["caption"], 0, presentation=direct)
+            return _finish(
+                json.dumps(result.get("data"), default=str)[:2000],
+                0,
+            )
+        return _finish(
+            f"I could not complete that request: {result.get('error', 'unknown error')}",
+            0,
         )
 
     model_calls = 0

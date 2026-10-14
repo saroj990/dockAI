@@ -189,6 +189,7 @@ pytest -m integration   # disposable alpine container (needs Docker)
 - Direct commands ≈ `docker` speed.
 - NL mode cost is mostly **Ollama**, not Docker.
 - **Table-first:** simple list / uptime / search / logs / inspect skip the second LLM summary.
+- **NL shortcuts:** common phrases skip Ollama entirely (timings show `shortcut:list` / `shortcut:logs`). Troubleshooting / vague asks still use the model.
 
 ---
 

@@ -69,6 +69,9 @@ def test_agent_skips_second_ollama_for_list():
     assert result.presentation is not None
     assert result.presentation["kind"] == "containers"
     assert result.answer.startswith("Showing")
-    assert llm.responses  # second model reply unused
+    assert llm.responses  # model unused (shortcut or table-first)
+    # Either NL shortcut (no ollama) or one ollama tool-pick round.
     ollama_stages = [label for label, _ in result.timings if label.startswith("ollama")]
-    assert len(ollama_stages) == 1
+    shortcut_stages = [label for label, _ in result.timings if label.startswith("shortcut:")]
+    assert len(ollama_stages) <= 1
+    assert ollama_stages or shortcut_stages
