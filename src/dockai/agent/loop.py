@@ -18,6 +18,7 @@ from dockai.agent.registry import (
     execute_tool,
     ollama_tool_schemas,
 )
+from dockai.agent.scope import apply_list_scope
 from dockai.agent.shortcuts import match_shortcut
 from dockai.llm.base import ChatMessage, LLMProvider
 from dockai.present import try_table_first
@@ -32,6 +33,13 @@ Prefer concise answers. Use tables when the user asks for tabular output.
 When the user asks for specific columns (e.g. only name and uptime), pass columns
 on list_containers / list_uptime / search_containers.
 For uptime questions, call list_uptime.
+When the user asks for running containers (including "only running", "that are
+running", or column subsets of running containers), call list_containers or
+list_uptime with all_containers=false. For "exited/stopped/dead containers",
+call list_containers with all_containers=true and status=exited|stopped|dead —
+all_containers alone still includes running containers. Set all_containers=true
+without status only for an explicit "all containers" ask. Do not call
+get_container_logs or inspect_container for a plain list.
 Default log window is the last 100 lines unless the user asks otherwise.
 For follow-ups like "that container" or "its logs", use the session focused container
 only when the context marks exactly one. If unclear, ask which container.
@@ -256,14 +264,17 @@ def run_agent(
     shortcut = match_shortcut(user_text, focus_container=focus_container)
     if shortcut is not None:
         progress(f"NL shortcut matched ({shortcut.label}) — skipping Ollama…")
+        shortcut_args = apply_list_scope(
+            user_text, shortcut.tool, shortcut.arguments
+        )
         t0 = time.perf_counter()
         result = execute_tool(
-            registry, client, shortcut.tool, shortcut.arguments
+            registry, client, shortcut.tool, shortcut_args
         )
         timings.append((shortcut.label, time.perf_counter() - t0))
         item = {
             "tool": shortcut.tool,
-            "arguments": shortcut.arguments,
+            "arguments": shortcut_args,
             "result": result,
         }
         collected.append(item)
@@ -312,12 +323,13 @@ def run_agent(
             batch: list[dict[str, Any]] = []
             for call in assistant.tool_calls:
                 progress(f"Fetching from Docker — {call.name}…")
+                call_args = apply_list_scope(user_text, call.name, call.arguments)
                 t1 = time.perf_counter()
-                result = execute_tool(registry, client, call.name, call.arguments)
+                result = execute_tool(registry, client, call.name, call_args)
                 timings.append((f"docker {call.name}", time.perf_counter() - t1))
                 item = {
                     "tool": call.name,
-                    "arguments": call.arguments,
+                    "arguments": call_args,
                     "result": result,
                 }
                 batch.append(item)

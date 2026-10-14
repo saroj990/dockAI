@@ -19,6 +19,14 @@ DEFAULT_LOG_TAIL = 100
 # Soft cap so "full logs" cannot flood the terminal or LLM context later.
 MAX_FULL_LOG_CHARS = 200_000
 
+# User-facing status filter keys → Docker State.Status values.
+STATUS_FILTERS: dict[str, frozenset[str]] = {
+    "running": frozenset({"running"}),
+    "exited": frozenset({"exited"}),
+    "stopped": frozenset({"exited", "dead"}),
+    "dead": frozenset({"dead"}),
+}
+
 
 def _short_id(container_id: str) -> str:
     return container_id[:12]
@@ -73,13 +81,28 @@ def list_containers(
     client: docker.DockerClient,
     *,
     all_containers: bool = False,
+    status: str | None = None,
 ) -> list[dict[str, Any]]:
-    """List containers; defaults to running only."""
+    """
+    List containers; defaults to running only.
+
+    Optional status filter key: running | exited | stopped | dead.
+    "stopped" matches Docker exited + dead.
+    """
     try:
         containers = client.containers.list(all=all_containers)
     except APIError as exc:
         raise DockerUnavailableError(f"Failed to list containers: {exc}") from exc
-    return [summarize_container(c) for c in containers]
+    rows = [summarize_container(c) for c in containers]
+    if status:
+        if status not in STATUS_FILTERS:
+            raise ValueError(
+                f"Unknown status filter '{status}'. "
+                f"Use one of: {', '.join(sorted(STATUS_FILTERS))}."
+            )
+        allowed = STATUS_FILTERS[status]
+        rows = [r for r in rows if (r.get("status") or "").lower() in allowed]
+    return rows
 
 
 def _normalize_name(value: str) -> str:
@@ -242,13 +265,20 @@ def search_containers(
     keyword: str,
     *,
     running_only: bool = False,
+    status: str | None = None,
 ) -> dict[str, Any]:
     """Case-insensitive name keyword search."""
     if not keyword.strip():
         raise ValueError("Search keyword must not be empty.")
 
-    scope = "running" if running_only else "all"
-    containers = list_containers(client, all_containers=not running_only)
+    all_containers = not running_only
+    if status and status != "running":
+        all_containers = True
+        running_only = False
+    scope = status or ("running" if running_only else "all")
+    containers = list_containers(
+        client, all_containers=all_containers, status=status
+    )
     needle = keyword.lower()
     matches = [c for c in containers if needle in c["name"].lower()]
     return {
