@@ -50,3 +50,16 @@ def test_config_subcommand_not_rewritten(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["dockai", "config"])
     main_cli()
     assert seen[1] == "config"
+
+
+def test_setup_subcommand_not_rewritten(monkeypatch):
+    seen: list[str] = []
+
+    def fake_app():
+        seen.extend(sys.argv)
+
+    monkeypatch.setattr("dockai.cli.app", fake_app)
+    monkeypatch.setattr(sys, "argv", ["dockai", "setup", "config"])
+    main_cli()
+    assert seen[1] == "setup"
+    assert seen[2] == "config"
