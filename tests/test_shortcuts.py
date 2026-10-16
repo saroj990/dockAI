@@ -68,6 +68,33 @@ def test_shortcut_logs_for_last_n_lines():
     assert s.arguments["tail"] == 150
 
 
+def test_shortcut_dig_into_logs_for_container():
+    s = match_shortcut("can we dig into the logs for saien backend api")
+    assert s is not None
+    assert s.tool == "get_container_logs"
+    assert s.arguments["target"] == "saien backend api"
+
+
+def test_shortcut_dig_into_logs_skips_ollama_in_agent():
+    client = MagicMock()
+    client.containers.list.return_value = [
+        make_container(name="saien-backend-api", logs=b"line\n")
+    ]
+    llm = ScriptedLLM(
+        [ChatMessage(role="assistant", content="should-not-be-called")]
+    )
+    result = run_agent(
+        "can we dig into the logs for saien backend api",
+        llm=llm,
+        client=client,
+    )
+    assert result.presentation is not None
+    assert result.presentation["kind"] == "logs"
+    assert llm.responses  # unused
+    assert any(label == "shortcut:logs" for label, _ in result.timings)
+    assert not any(label.startswith("ollama") for label, _ in result.timings)
+
+
 def test_shortcut_skips_troubleshooting():
     assert match_shortcut("why is my container restarting?") is None
     assert match_shortcut("what could be wrong with api-server?") is None

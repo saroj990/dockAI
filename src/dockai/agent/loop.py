@@ -44,6 +44,8 @@ all_containers alone still includes running containers. Set all_containers=true
 without status only for an explicit "all containers" ask. Do not call
 get_container_logs or inspect_container for a plain list.
 Default log window is the last 100 lines unless the user asks otherwise.
+When the user asks for logs, log lines, tail, or to dig into logs, call
+get_container_logs — not inspect_container.
 For follow-ups like "that container" or "its logs", use the session focused container
 only when the context marks exactly one. If unclear, ask which container.
 To start, stop, or restart a container, call start_container / stop_container /
