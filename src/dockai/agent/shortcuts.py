@@ -31,6 +31,69 @@ class Shortcut:
     label: str
 
 
+# Conversational lead-in stripped before log intent matching (LLM not needed).
+_LOGS_LEAD_IN = re.compile(
+    r"^(?:(?:can|could)\s+(?:we|you|I)\s+|please\s+)+",
+    re.IGNORECASE,
+)
+
+# "<target> logs" — e.g. "show last 25 lines of api-server logs"
+_LOGS_OF_TARGET = re.compile(
+    r"^(?:please\s+)?(?:show|get|fetch|pull|tail|dig\s+into)?\s*"
+    r"(?:the\s+)?(?:last\s+(\d+)\s+lines?\s+of\s+)?"
+    r"(.+?)\s+logs?"
+    r"(?:\s+for\s+last\s+(\d+)\s+lines?)?"
+    r"(?:\s+please)?$",
+    re.IGNORECASE,
+)
+
+# "logs for <target>" — e.g. "dig into the logs for saien backend api"
+_LOGS_FOR_TARGET = re.compile(
+    r"^(?:please\s+)?(?:show|get|fetch|pull|tail|dig\s+into)?\s*"
+    r"(?:the\s+)?logs?\s+(?:of|for|from)\s+(.+?)"
+    r"(?:\s+last\s+(\d+)\s+lines?)?"
+    r"(?:\s+please)?$",
+    re.IGNORECASE,
+)
+
+
+def _match_logs_shortcut(lower: str) -> Shortcut | None:
+    """Derive get_container_logs from common log phrasing without the LLM."""
+    text = _LOGS_LEAD_IN.sub("", lower.strip()).strip()
+    if not text:
+        return None
+
+    match = _LOGS_OF_TARGET.fullmatch(text)
+    if match:
+        tail_a, target, tail_b = match.group(1), match.group(2), match.group(3)
+        target = _clean_target(target)
+        if target and not _looks_like_question(target):
+            args: dict[str, Any] = {"target": target}
+            tail = tail_a or tail_b
+            if tail:
+                args["tail"] = int(tail)
+            return Shortcut(
+                tool="get_container_logs",
+                arguments=args,
+                label="shortcut:logs",
+            )
+
+    match = _LOGS_FOR_TARGET.fullmatch(text)
+    if match:
+        target = _clean_target(match.group(1))
+        if target and not _looks_like_question(target):
+            args = {"target": target}
+            if match.group(2):
+                args["tail"] = int(match.group(2))
+            return Shortcut(
+                tool="get_container_logs",
+                arguments=args,
+                label="shortcut:logs",
+            )
+
+    return None
+
+
 def match_shortcut(
     user_text: str,
     *,
@@ -82,47 +145,9 @@ def match_shortcut(
                 label=f"shortcut:{action}",
             )
 
-    # Logs: "show last 25 lines of api-server logs" / "logs for api-server"
-    logs = re.fullmatch(
-        r"(?:please\s+)?(?:show|get|fetch|pull|dig\s+into)?\s*"
-        r"(?:the\s+)?(?:last\s+(\d+)\s+lines?\s+of\s+)?"
-        r"(.+?)\s+logs?"
-        r"(?:\s+for\s+last\s+(\d+)\s+lines?)?"
-        r"(?:\s+please)?",
-        lower,
-    )
-    if logs:
-        tail_a, target, tail_b = logs.group(1), logs.group(2), logs.group(3)
-        target = _clean_target(target)
-        if target and not _looks_like_question(target):
-            args: dict[str, Any] = {"target": target}
-            tail = tail_a or tail_b
-            if tail:
-                args["tail"] = int(tail)
-            return Shortcut(
-                tool="get_container_logs",
-                arguments=args,
-                label="shortcut:logs",
-            )
-
-    # Alternate logs: "logs of api-server" / "show logs for api-server"
-    logs2 = re.fullmatch(
-        r"(?:please\s+)?(?:show|get|fetch|pull)?\s*"
-        r"logs?\s+(?:of|for|from)\s+(.+)"
-        r"(?:\s+last\s+(\d+)\s+lines?)?",
-        lower,
-    )
-    if logs2:
-        target = _clean_target(logs2.group(1))
-        if target and not _looks_like_question(target):
-            args = {"target": target}
-            if logs2.group(2):
-                args["tail"] = int(logs2.group(2))
-            return Shortcut(
-                tool="get_container_logs",
-                arguments=args,
-                label="shortcut:logs",
-            )
+    logs_shortcut = _match_logs_shortcut(lower)
+    if logs_shortcut is not None:
+        return logs_shortcut
 
     # Inspect: "inspect api-server"
     insp = re.fullmatch(

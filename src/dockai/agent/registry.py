@@ -190,7 +190,10 @@ def build_registry() -> dict[str, ToolSpec]:
         ),
         "inspect_container": ToolSpec(
             name="inspect_container",
-            description="Inspect one container by name or ID.",
+            description=(
+                "Inspect one container's metadata and state by name or ID. "
+                "Do not use for log output — use get_container_logs instead."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -207,8 +210,10 @@ def build_registry() -> dict[str, ToolSpec]:
         "get_container_logs": ToolSpec(
             name="get_container_logs",
             description=(
-                f"Get container logs. Default last {DEFAULT_LOG_TAIL} lines. "
-                "Use full=true for all available logs (may truncate)."
+                f"Get container logs (show/tail/dig into logs). Default last "
+                f"{DEFAULT_LOG_TAIL} lines. Use full=true for all available logs "
+                "(may truncate). Prefer this over inspect_container when the user "
+                "asks for logs, log lines, or tail output."
             ),
             parameters={
                 "type": "object",
