@@ -17,6 +17,43 @@ class OllamaError(DockaiError):
     """Ollama request failed or returned an unusable response."""
 
 
+class OllamaNotFoundError(DockaiError):
+    """Ollama HTTP API is not reachable at the given host."""
+
+
+def list_ollama_models(
+    host: str,
+    *,
+    client: httpx.Client | None = None,
+    timeout: float = 15.0,
+) -> list[str]:
+    """Return model names from GET /api/tags (sorted)."""
+    base = host.rstrip("/")
+    owns = client is None
+    http = client or httpx.Client(base_url=base, timeout=timeout)
+    try:
+        resp = http.get("/api/tags")
+        resp.raise_for_status()
+        data = resp.json()
+    except httpx.HTTPError as exc:
+        raise OllamaNotFoundError(
+            f"Ollama not found at {base}. Is it running and is the URL correct?"
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise OllamaNotFoundError(
+            f"Ollama not found at {base} (invalid response)."
+        ) from exc
+    finally:
+        if owns:
+            http.close()
+
+    names: list[str] = []
+    for item in data.get("models") or []:
+        if isinstance(item, dict) and item.get("name"):
+            names.append(str(item["name"]))
+    return sorted(names)
+
+
 class OllamaProvider:
     def __init__(
         self,

@@ -11,7 +11,8 @@ import typer
 
 from dockai import __version__
 from dockai.agent import ChatSession, run_agent
-from dockai.config import Settings, load_settings
+from dockai.config import Settings, config_path_for_write, load_settings
+from dockai.setup_config import SetupConfigError, run_setup_config
 from dockai.diagnostics import configure_diagnostics
 from dockai.docker_client import get_client
 from dockai.errors import AmbiguousContainerError, DockaiError
@@ -52,12 +53,20 @@ _SUBCOMMANDS = frozenset(
         "inspect",
         "logs",
         "search",
+        "setup",
         "uptime",
         "start",
         "stop",
         "restart",
     }
 )
+
+setup_app = typer.Typer(
+    name="setup",
+    help="Interactive setup (Ollama host and model).",
+    no_args_is_help=True,
+)
+app.add_typer(setup_app, name="setup")
 
 
 def _version_callback(value: bool) -> None:
@@ -208,6 +217,35 @@ def config_cmd(ctx: typer.Context) -> None:
     console.print(f"[bold]ollama.timeout:[/bold] {settings.ollama_timeout}")
     console.print(f"[bold]docker.timeout:[/bold] {settings.docker_timeout}")
     console.print(f"[bold]diagnostics.verbose:[/bold] {settings.verbose}")
+
+
+@setup_app.command("config")
+def setup_config_cmd(ctx: typer.Context) -> None:
+    """Prompt for Ollama URL and model, then save to dockai.toml."""
+    settings = _ctx_settings(ctx)
+    target = config_path_for_write(config_path=settings.config_path)
+
+    def prompt_url() -> str:
+        return typer.prompt(
+            "Ollama host IP (port defaults to 11434, http:// optional)",
+        )
+
+    def prompt_model_index(models: list[str]) -> int:
+        console.print("[bold]Available models:[/bold]")
+        for idx, name in enumerate(models, start=1):
+            console.print(f"  {idx}. {name}")
+        return typer.prompt("Select model number", type=int)
+
+    try:
+        written = run_setup_config(
+            config_path=target,
+            prompt_url=prompt_url,
+            prompt_model_index=prompt_model_index,
+        )
+        console.print(f"[green]Saved Ollama settings to {written}[/green]")
+    except SetupConfigError as exc:
+        print_error(str(exc))
+        raise typer.Exit(code=1) from exc
 
 
 @app.command("ask")
