@@ -42,13 +42,40 @@ _SUBSET_HINT = re.compile(
     re.IGNORECASE,
 )
 
+# Explicit NL column lists (validated for unknown tokens).
+_EXPLICIT_COLUMN_PHRASES = (
+    re.compile(r"\bonly\s+(.+?)\s+of\b", re.IGNORECASE),
+    re.compile(r"\bonly\s+(.+?)\s+for\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:show|display|pull|list)\s+(.+?)\s+in\s+a\s+table\b",
+        re.IGNORECASE,
+    ),
+)
+
+
+def supported_columns_message() -> str:
+    return ", ".join(SUPPORTED_COLUMNS)
+
+
+def unknown_columns_message(tokens: list[str]) -> str:
+    listed = ", ".join(sorted({t.strip() for t in tokens if t.strip()}))
+    return (
+        f"Unknown column name(s): {listed}. "
+        f"Supported columns: {supported_columns_message()}."
+    )
+
 
 def normalize_column_token(token: str) -> str | None:
     key = " ".join(token.strip().lower().replace("-", " ").replace("_", " ").split())
     return _ALIASES.get(key)
 
 
-def coerce_columns_arg(value: Any) -> list[str] | None:
+def _split_column_phrase(phrase: str) -> list[str]:
+    normalized = re.sub(r"\s+and\s+", ",", phrase.strip(), flags=re.IGNORECASE)
+    return [part.strip() for part in normalized.split(",") if part.strip()]
+
+
+def coerce_columns_arg(value: Any, *, strict: bool = False) -> list[str] | None:
     """Accept list/tuple or comma-separated string from the LLM."""
     if value is None:
         return None
@@ -60,13 +87,46 @@ def coerce_columns_arg(value: Any) -> list[str] | None:
     else:
         return None
     columns: list[str] = []
+    unknown: list[str] = []
     seen: set[str] = set()
     for item in raw:
         normalized = normalize_column_token(item)
-        if normalized and normalized not in seen:
-            seen.add(normalized)
-            columns.append(normalized)
-    return columns or None
+        if normalized:
+            if normalized not in seen:
+                seen.add(normalized)
+                columns.append(normalized)
+        else:
+            token = item.strip()
+            if token:
+                unknown.append(token)
+    if strict and unknown:
+        raise ValueError(unknown_columns_message(unknown))
+    if not columns:
+        return None
+    return columns
+
+
+def unknown_columns_in_user_text(user_text: str) -> list[str]:
+    """Return unsupported column tokens from explicit NL column lists."""
+    text = (user_text or "").strip()
+    if not text:
+        return []
+    unknown: list[str] = []
+    for pattern in _EXPLICIT_COLUMN_PHRASES:
+        match = pattern.search(text)
+        if not match:
+            continue
+        for token in _split_column_phrase(match.group(1)):
+            if not normalize_column_token(token):
+                unknown.append(token)
+    return unknown
+
+
+def validate_user_column_request(user_text: str) -> None:
+    """Raise ValueError when the user names unsupported columns explicitly."""
+    bad = unknown_columns_in_user_text(user_text)
+    if bad:
+        raise ValueError(unknown_columns_message(bad))
 
 
 def parse_columns_from_text(user_text: str) -> list[str] | None:

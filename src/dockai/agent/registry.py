@@ -35,9 +35,10 @@ _COLUMNS_PARAM = {
 def _validate_optional_columns(args: dict[str, Any]) -> None:
     if "columns" not in args or args["columns"] is None:
         return
-    if coerce_columns_arg(args["columns"]) is None:
+    if coerce_columns_arg(args["columns"], strict=True) is None:
         raise ValueError(
-            f"'columns' must include at least one of: {', '.join(SUPPORTED_COLUMNS)}"
+            f"'columns' must include at least one supported column: "
+            f"{', '.join(SUPPORTED_COLUMNS)}"
         )
 
 
