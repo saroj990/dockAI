@@ -39,6 +39,16 @@ def test_detect_status_filter():
     assert detect_status_filter("show running containers") == "running"
     assert detect_status_filter("list all containers") is None
     assert detect_status_filter("containers including exited") is None
+    assert detect_status_filter("show me inactive containers") == "not_running"
+    assert (
+        detect_status_filter("show me containers which not running right now")
+        == "not_running"
+    )
+    assert detect_status_filter("not running") == "not_running"
+    assert (
+        detect_status_filter("list all containers except running ones")
+        == "not_running"
+    )
 
 
 def test_apply_list_scope_forces_running():

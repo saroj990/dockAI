@@ -19,7 +19,11 @@ from dockai.agent.registry import (
     execute_tool,
     ollama_tool_schemas,
 )
-from dockai.agent.scope import apply_list_scope
+from dockai.agent.scope import (
+    apply_list_scope,
+    effective_list_user_text,
+    reconcile_tool_for_list_intent,
+)
 from dockai.agent.shortcuts import match_shortcut, needs_docker_tool
 from dockai.llm.base import ChatMessage, LLMProvider
 from dockai.present import try_table_first
@@ -237,6 +241,7 @@ def run_agent(
     registry: dict[str, ToolSpec] | None = None,
     history: list[ChatMessage] | None = None,
     focus_container: str | None = None,
+    list_context: str | None = None,
     max_turns: int = 6,
     on_progress: Callable[[str], None] | None = None,
 ) -> AgentResult:
@@ -272,6 +277,8 @@ def run_agent(
 
     validate_user_column_request(user_text)
 
+    list_text = effective_list_user_text(user_text, list_context)
+
     registry = registry or build_registry()
     tools = ollama_tool_schemas(registry)
     messages.append(
@@ -299,11 +306,11 @@ def run_agent(
         )
 
     # High-confidence phrases skip Ollama entirely.
-    shortcut = match_shortcut(user_text, focus_container=focus_container)
+    shortcut = match_shortcut(list_text, focus_container=focus_container)
     if shortcut is not None:
         progress(f"NL shortcut matched ({shortcut.label}) — skipping Ollama…")
         shortcut_args = apply_list_scope(
-            user_text, shortcut.tool, shortcut.arguments
+            list_text, shortcut.tool, shortcut.arguments
         )
         t0 = time.perf_counter()
         result = execute_tool(
@@ -333,7 +340,7 @@ def run_agent(
         if pending is not None:
             return _finish(_format_pending(pending), 0)
         if result.get("ok"):
-            direct = try_table_first([item], user_text=user_text)
+            direct = try_table_first([item], user_text=list_text)
             if direct is not None:
                 messages.append(
                     ChatMessage(role="assistant", content=direct["caption"])
@@ -361,12 +368,17 @@ def run_agent(
             batch: list[dict[str, Any]] = []
             for call in assistant.tool_calls:
                 progress(f"Fetching from Docker — {call.name}…")
-                call_args = apply_list_scope(user_text, call.name, call.arguments)
+                tool_name, call_args = reconcile_tool_for_list_intent(
+                    user_text,
+                    call.name,
+                    call.arguments,
+                    list_context=list_context,
+                )
                 t1 = time.perf_counter()
-                result = execute_tool(registry, client, call.name, call_args)
-                timings.append((f"docker {call.name}", time.perf_counter() - t1))
+                result = execute_tool(registry, client, tool_name, call_args)
+                timings.append((f"docker {tool_name}", time.perf_counter() - t1))
                 item = {
-                    "tool": call.name,
+                    "tool": tool_name,
                     "arguments": call_args,
                     "result": result,
                 }
@@ -387,7 +399,7 @@ def run_agent(
                 return _finish(_format_pending(pending), turn)
 
             # Skip summarization LLM for simple list/logs/search/inspect.
-            direct = try_table_first(batch, user_text=user_text)
+            direct = try_table_first(batch, user_text=list_text)
             if direct is not None:
                 progress("Rendering Docker results (skipping model summary)…")
                 caption = direct["caption"]
