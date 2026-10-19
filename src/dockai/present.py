@@ -11,6 +11,7 @@ from dockai.formatting import (
     print_inspect,
     print_logs,
     print_search,
+    print_troubleshoot,
 )
 
 # Single-tool reads that are clear without model narration.
@@ -97,6 +98,16 @@ def presentation_from_tool(
             "caption": f"Inspect {data.get('name')} ({data.get('id')}) from Docker.",
             "data": data,
         }
+    if name == "troubleshoot_container_logs" and isinstance(data, dict):
+        signals = (data.get("analysis") or {}).get("signal_line_count", 0)
+        return {
+            "kind": "troubleshoot_logs",
+            "caption": (
+                f"Troubleshoot evidence for {data.get('container')} "
+                f"({data.get('id')}) — {signals} log signal line(s) from Docker."
+            ),
+            "data": data,
+        }
     return None
 
 
@@ -150,5 +161,8 @@ def render_presentation(presentation: dict[str, Any]) -> None:
         return
     if kind == "inspect":
         print_inspect(presentation["data"])
+        return
+    if kind == "troubleshoot_logs":
+        print_troubleshoot(presentation["data"])
         return
     console.print(presentation.get("caption", ""))

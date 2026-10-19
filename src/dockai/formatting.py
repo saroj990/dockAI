@@ -135,6 +135,50 @@ def print_inspect(summary: dict[str, Any]) -> None:
     console.print(table)
 
 
+def print_troubleshoot(result: dict[str, Any]) -> None:
+    """Render inspect facts and deterministic log signal highlights."""
+    inspect_data = result.get("inspect") or {}
+    analysis = result.get("analysis") or {}
+    logs_meta = result.get("logs") or {}
+
+    table = Table(title=f"Troubleshoot {result.get('container')} ({result.get('id')})")
+    table.add_column("Field", style="bold")
+    table.add_column("Value")
+    rows = [
+        ("Status", inspect_data.get("status")),
+        ("Restarts", inspect_data.get("restarts")),
+        ("Restarting", inspect_data.get("restarting")),
+        ("Exit code", inspect_data.get("exit_code")),
+        ("OOM killed", inspect_data.get("oom_killed")),
+        ("Health", inspect_data.get("health")),
+        ("Docker error", inspect_data.get("error")),
+    ]
+    uptime = inspect_data.get("uptime") or {}
+    rows.append((uptime.get("label", "Uptime"), uptime.get("value")))
+    for label, value in rows:
+        if value is None:
+            continue
+        table.add_row(label, str(value))
+    console.print(table)
+
+    console.print("[bold]Log signals (from Docker)[/bold]")
+    highlights = analysis.get("highlight_lines") or []
+    if not highlights:
+        console.print("[dim]No error-like lines in the analyzed log tail.[/dim]")
+    else:
+        for item in highlights:
+            cats = ", ".join(item.get("categories") or [])
+            console.print(
+                f"  [dim]L{item.get('line')}[/dim] [{cats}] {item.get('text', '')}"
+            )
+
+    note = logs_meta.get("note")
+    if note:
+        console.print(f"[dim]{note}[/dim]")
+    if logs_meta.get("truncated"):
+        console.print("[dim]Log output was truncated for safety.[/dim]")
+
+
 def print_logs(result: dict[str, Any]) -> None:
     header = Text()
     header.append(f"{result['container']} ({result['id']})", style="bold")

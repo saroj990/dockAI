@@ -251,3 +251,50 @@ def test_agent_max_turns_uses_last_tool_error():
     result = run_agent("x", llm=llm, client=client, max_turns=3)
     assert "could not complete" in result.answer.lower()
     assert "Unknown tool" in result.answer or "unknown tool" in result.answer.lower()
+
+
+def test_agent_troubleshoot_tool_then_llm_summary():
+    container = make_container(
+        name="api-server",
+        status="restarting",
+        restarting=True,
+        restart_count=2,
+        logs=b"panic: oom\n",
+    )
+    client = MagicMock()
+    client.containers.list.return_value = [container]
+    llm = ScriptedLLM(
+        [
+            ChatMessage(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="1",
+                        name="troubleshoot_container_logs",
+                        arguments={"target": "api-server"},
+                    )
+                ],
+            ),
+            ChatMessage(
+                role="assistant",
+                content=(
+                    "Facts: container is restarting with OOM in logs. "
+                    "Likely hypothesis: memory limit too low."
+                ),
+            ),
+        ]
+    )
+    result = run_agent(
+        "Why is api-server failing? Troubleshoot the logs.",
+        llm=llm,
+        client=client,
+    )
+    assert any(
+        t["tool"] == "troubleshoot_container_logs" and t["result"].get("ok")
+        for t in result.tool_results
+    )
+    assert result.presentation is not None
+    assert result.presentation["kind"] == "troubleshoot_logs"
+    assert "OOM" in result.answer or "restarting" in result.answer.lower()
+    assert len(llm.calls) == 2

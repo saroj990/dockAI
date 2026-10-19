@@ -148,11 +148,13 @@ def _run_ask(
 def _print_agent_result(result: Any, *, chat: bool = False) -> None:
     if result.presentation is not None:
         render_presentation(result.presentation)
+    answer = (result.answer or "").strip()
+    if not answer:
         return
     if chat:
-        console.print(f"[bold]Agent:[/bold] {result.answer}")
+        console.print(f"[bold]Agent:[/bold] {answer}")
     else:
-        console.print(result.answer)
+        console.print(answer)
 
 
 def _lifecycle_cmd(

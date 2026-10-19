@@ -40,6 +40,21 @@ def test_try_table_first_skips_multi_tool_batch():
     assert try_table_first(batch) is None
 
 
+def test_presentation_from_troubleshoot_tool():
+    data = {
+        "container": "api",
+        "id": "abc",
+        "inspect": {"status": "running"},
+        "analysis": {"signal_line_count": 2},
+    }
+    from dockai.present import presentation_from_tool
+
+    pres = presentation_from_tool("troubleshoot_container_logs", data)
+    assert pres is not None
+    assert pres["kind"] == "troubleshoot_logs"
+    assert "2 log signal" in pres["caption"]
+
+
 def test_try_table_first_skips_restarting_list():
     batch = [
         {

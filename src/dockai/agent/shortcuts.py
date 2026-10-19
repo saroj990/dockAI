@@ -264,6 +264,14 @@ def needs_docker_tool(
         lower,
     ):
         return True
+    if re.search(
+        r"\b(?:troubleshoot|diagnos\w*|debug)\b.*\b(?:logs?|container)\b",
+        lower,
+    ) or re.search(
+        r"\b(?:why|what).*\b(?:wrong|failing|fail|issue|problem)\b",
+        lower,
+    ):
+        return True
     if re.search(r"\blogs?\b", lower) and re.search(
         r"\b(?:for|of|from|last|lines?|show|get|fetch|pull|dig)\b",
         lower,

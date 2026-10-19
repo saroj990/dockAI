@@ -83,6 +83,28 @@ def test_at05_restart_troubleshooting_evidence(mock_client):
     assert "oom" in logs["data"]["logs"]
 
 
+def test_at05b_single_troubleshoot_tool_replaces_inspect_plus_logs(mock_client):
+    c = make_container(
+        name="flaky",
+        status="restarting",
+        restart_count=4,
+        restarting=True,
+        logs=b"panic: oom\n",
+    )
+    mock_client.containers.list.return_value = [c]
+    outcome = execute_tool(
+        build_registry(),
+        mock_client,
+        "troubleshoot_container_logs",
+        {"target": "flaky"},
+    )
+    assert outcome["ok"] is True
+    data = outcome["data"]
+    assert data["inspect"]["restarting"] is True
+    assert data["analysis"]["signal_line_count"] >= 1
+    assert "oom" in data["logs"]["logs"]
+
+
 def test_at06_uptime_running_and_stopped(mock_client):
     running = make_container(name="up", status="running")
     stopped = make_container(

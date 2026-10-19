@@ -240,6 +240,8 @@ dockai "what looks unhealthy?"
 dockai "which of these look stuck?"
 ```
 
+**Log troubleshooting** (`dockai ask` / `dockai chat`): for diagnosis asks about a named container, the agent calls `troubleshoot_container_logs` — inspect state plus deterministic log signal highlights (errors, OOM, panics, tracebacks) from Docker, then an Ollama summary that separates facts from hypotheses. Plain log tailing still uses `dockai logs` or `get_container_logs` shortcuts.
+
 ### Name resolution (spaces, hyphens, typos)
 
 Resolve accepts flexible names for inspect / logs / start / stop / restart:

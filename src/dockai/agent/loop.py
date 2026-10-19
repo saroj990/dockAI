@@ -26,7 +26,7 @@ from dockai.agent.scope import (
 )
 from dockai.agent.shortcuts import match_shortcut, needs_docker_tool
 from dockai.llm.base import ChatMessage, LLMProvider
-from dockai.present import try_table_first
+from dockai.present import presentation_from_tool, try_table_first
 
 SYSTEM_PROMPT = """You are dockai, a Docker inspection assistant.
 Use only the provided tools for container facts. Never invent container IDs, names,
@@ -51,6 +51,10 @@ get_container_logs or inspect_container for a plain list.
 Default log window is the last 100 lines unless the user asks otherwise.
 When the user asks for logs, log lines, tail, or to dig into logs, call
 get_container_logs — not inspect_container.
+When the user asks why a container is failing, restarting, unhealthy, or wants
+log troubleshooting/diagnosis, call troubleshoot_container_logs (not get_container_logs
+alone). Separate observed facts from hypotheses; cite log lines only if the tool
+returned them.
 For follow-ups like "that container" or "its logs", use the session focused container
 only when the context marks exactly one. If unclear, ask which container.
 To start, stop, or restart a container, call start_container / stop_container /
@@ -286,6 +290,7 @@ def run_agent(
     )
     collected: list[dict[str, Any]] = []
     timings: list[tuple[str, float]] = []
+    pending_presentation: dict[str, Any] | None = None
 
     def _finish(
         answer: str,
@@ -294,6 +299,9 @@ def run_agent(
         presentation: dict[str, Any] | None = None,
     ) -> AgentResult:
         pending = _pending_from_results(collected)
+        resolved_presentation = (
+            presentation if presentation is not None else pending_presentation
+        )
         return AgentResult(
             answer=answer,
             tool_results=collected,
@@ -302,7 +310,7 @@ def run_agent(
             focus_container=_next_focus(collected, focus_container),
             pending_action=pending,
             timings=list(timings),
-            presentation=presentation,
+            presentation=resolved_presentation,
         )
 
     # High-confidence phrases skip Ollama entirely.
@@ -387,7 +395,7 @@ def run_agent(
                 messages.append(
                     ChatMessage(
                         role="tool",
-                        name=call.name,
+                        name=tool_name,
                         tool_call_id=call.id,
                         content=json.dumps(result, default=str),
                     )
@@ -397,6 +405,20 @@ def run_agent(
             if pending is not None:
                 progress("Waiting for your confirmation…")
                 return _finish(_format_pending(pending), turn)
+
+            if (
+                len(batch) == 1
+                and batch[0].get("tool") == "troubleshoot_container_logs"
+                and (batch[0].get("result") or {}).get("ok")
+            ):
+                built = presentation_from_tool(
+                    "troubleshoot_container_logs",
+                    batch[0]["result"].get("data"),
+                )
+                if built is not None:
+                    pending_presentation = built
+                progress("Log signals ready — asking the model to summarize…")
+                continue
 
             # Skip summarization LLM for simple list/logs/search/inspect.
             direct = try_table_first(batch, user_text=list_text)

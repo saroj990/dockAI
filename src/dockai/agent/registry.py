@@ -20,6 +20,10 @@ from dockai.tools.containers import (
     search_containers,
 )
 from dockai.tools.lifecycle import Action, propose_action
+from dockai.tools.troubleshoot import (
+    DEFAULT_TROUBLESHOOT_TAIL,
+    troubleshoot_container_logs,
+)
 
 _COLUMNS_PARAM = {
     "type": "array",
@@ -288,11 +292,44 @@ def build_registry() -> dict[str, ToolSpec]:
             },
             handler=lambda client, **a: _list_uptime_result(client, a),
         ),
+        "troubleshoot_container_logs": ToolSpec(
+            name="troubleshoot_container_logs",
+            description=(
+                "Troubleshoot a container: inspect state and analyze recent logs "
+                f"(default last {DEFAULT_TROUBLESHOOT_TAIL} lines) for errors, "
+                "OOM, panics, and tracebacks. Use when the user asks why a container "
+                "is failing, restarting, unhealthy, or wants log troubleshooting — "
+                "not for plain 'show logs' without diagnosis."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Container name or ID.",
+                    },
+                    "tail": {
+                        "type": "integer",
+                        "description": (
+                            f"Log lines from the end to analyze. "
+                            f"Default {DEFAULT_TROUBLESHOOT_TAIL}."
+                        ),
+                    },
+                },
+                "required": ["target"],
+                "additionalProperties": False,
+            },
+            handler=lambda client, **a: troubleshoot_container_logs(
+                client,
+                _require_str(a, "target"),
+                tail=_optional_int(a, "tail"),
+            ),
+        ),
         "list_restarting_containers": ToolSpec(
             name="list_restarting_containers",
             description=(
                 "List containers that are restarting or have a non-zero restart count. "
-                "Use for troubleshooting restart loops, then inspect and fetch logs."
+                "For a single named container, prefer troubleshoot_container_logs."
             ),
             parameters={
                 "type": "object",

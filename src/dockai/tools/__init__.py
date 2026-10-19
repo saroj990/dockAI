@@ -7,12 +7,14 @@ from dockai.tools.containers import (
     search_containers,
 )
 from dockai.tools.lifecycle import apply_action, propose_action
+from dockai.tools.troubleshoot import troubleshoot_container_logs
 
 __all__ = [
     "list_containers",
     "inspect_container",
     "get_container_logs",
     "search_containers",
+    "troubleshoot_container_logs",
     "propose_action",
     "apply_action",
 ]
