@@ -11,6 +11,7 @@ from typing import Any
 
 import docker
 
+from dockai.columns import validate_user_column_request
 from dockai.agent.policy import check_restricted_request
 from dockai.agent.registry import (
     ToolSpec,
@@ -268,6 +269,8 @@ def run_agent(
             timings=[],
             presentation=None,
         )
+
+    validate_user_column_request(user_text)
 
     registry = registry or build_registry()
     tools = ollama_tool_schemas(registry)
