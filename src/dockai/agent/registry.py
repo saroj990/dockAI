@@ -59,9 +59,10 @@ def _optional_status(args: dict[str, Any]) -> str | None:
 _STATUS_PARAM = {
     "type": "string",
     "description": (
-        "Optional status filter: running, exited, stopped, or dead. "
-        "Use exited/stopped/dead when the user asks for those containers "
-        "(requires all_containers=true). stopped matches exited+dead."
+        "Optional status filter: running, exited, stopped, dead, or not_running. "
+        "Use exited/stopped/dead/not_running when the user asks for those containers "
+        "(requires all_containers=true). stopped matches exited+dead; "
+        "not_running excludes running status."
     ),
 }
 

@@ -27,7 +27,28 @@ STATUS_FILTERS: dict[str, frozenset[str]] = {
     "exited": frozenset({"exited"}),
     "stopped": frozenset({"exited", "dead"}),
     "dead": frozenset({"dead"}),
+    "not_running": frozenset({"created", "exited", "dead", "paused"}),
 }
+
+
+def _apply_status_filter(
+    rows: list[dict[str, Any]], status: str | None
+) -> list[dict[str, Any]]:
+    if not status:
+        return rows
+    if status == "not_running":
+        return [
+            row
+            for row in rows
+            if (row.get("status") or "").lower() != "running"
+        ]
+    if status not in STATUS_FILTERS:
+        raise ValueError(
+            f"Unknown status filter '{status}'. "
+            f"Use one of: {', '.join(sorted(STATUS_FILTERS))}."
+        )
+    allowed = STATUS_FILTERS[status]
+    return [row for row in rows if (row.get("status") or "").lower() in allowed]
 
 # Close-match (typo) resolution — conservative to avoid wrong container ops.
 _FUZZY_MIN_NORM_LEN = 6
@@ -94,23 +115,17 @@ def list_containers(
     """
     List containers; defaults to running only.
 
-    Optional status filter key: running | exited | stopped | dead.
-    "stopped" matches Docker exited + dead.
+    Optional status filter key: running | exited | stopped | dead | not_running.
+    "stopped" matches Docker exited + dead. "not_running" excludes running status.
     """
+    if status == "not_running":
+        all_containers = True
     try:
         containers = client.containers.list(all=all_containers)
     except APIError as exc:
         raise DockerUnavailableError(f"Failed to list containers: {exc}") from exc
     rows = [summarize_container(c) for c in containers]
-    if status:
-        if status not in STATUS_FILTERS:
-            raise ValueError(
-                f"Unknown status filter '{status}'. "
-                f"Use one of: {', '.join(sorted(STATUS_FILTERS))}."
-            )
-        allowed = STATUS_FILTERS[status]
-        rows = [r for r in rows if (r.get("status") or "").lower() in allowed]
-    return rows
+    return _apply_status_filter(rows, status)
 
 
 def _normalize_name(value: str) -> str:

@@ -203,9 +203,10 @@ def match_shortcut(
         r"(?:me\s+)?(?:the\s+)?"
         r"(?:only\s+[\w\s,/]+?\s+of\s+)?"  # "only name and uptime of"
         r"(?:only\s+)?"  # "only running containers"
-        r"(?:all\s+|running\s+|exited\s+|stopped\s+|dead\s+)?"
+        r"(?:all\s+|running\s+|exited\s+|stopped\s+|dead\s+|inactive\s+|non[-\s]?running\s+)?"
         r"(?:my\s+|the\s+)?containers?"
-        r"(?:\s+that\s+are\s+(?:running|exited|stopped|dead))?"
+        r"(?:\s+(?:that|which)\s+(?:are\s+)?not\s+running(?:\s+right\s+now)?)?"
+        r"(?:\s+that\s+are\s+(?:running|exited|stopped|dead|inactive))?"
         r"(?:\s+please)?",
         lower,
     )
