@@ -17,9 +17,11 @@ from tests.test_agent import ScriptedLLM
     "raw,expected",
     [
         ("Show me logs for pg_tileserv", "logs for pg_tileserv"),
+        ("can we see logs for pg_tileserv", "logs for pg_tileserv"),
+        ("can we have logs for pg tileserv", "logs for pg tileserv"),
         ("can you please restart the container named api-server", "restart the container named api-server"),
         ("show me running containers", "running containers"),
-        ("  dig into the logs for x  ", "dig into the logs for x"),
+        ("  dig into the logs for x  ", "logs for x"),
     ],
 )
 def test_normalize_intent_text(raw: str, expected: str):
@@ -31,6 +33,11 @@ def test_normalize_intent_text(raw: str, expected: str):
     [
         ("logs for pg_tileserv", "get_container_logs", "pg_tileserv", None),
         ("show me logs for pg_tileserv", "get_container_logs", "pg_tileserv", None),
+        ("can we see logs for pg_tileserv", "get_container_logs", "pg_tileserv", None),
+        ("can we have logs for pg tileserv", "get_container_logs", "pg tileserv", None),
+        ("can we see the logs for pg_tileserv", "get_container_logs", "pg_tileserv", None),
+        ("let me see logs for pg_tileserv", "get_container_logs", "pg_tileserv", None),
+        ("I want to see logs for pg tileserv", "get_container_logs", "pg tileserv", None),
         (
             "show me logs for pg_tileserv containers",
             "get_container_logs",

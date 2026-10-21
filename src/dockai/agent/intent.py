@@ -23,13 +23,24 @@ _NEEDS_LLM = re.compile(
     re.IGNORECASE,
 )
 
-# Shared politeness / filler stripped once for all intents.
+# Shared politeness / filler stripped for all intents (applied repeatedly).
 _LEAD_IN = re.compile(
-    r"^(?:(?:can|could|would)\s+(?:we|you|I)\s+|please\s+)+",
+    r"^(?:"
+    r"(?:can|could|would)\s+(?:we|you|I)\s+"
+    r"|please\s+"
+    r"|let'?s\s+"
+    r"|let\s+me\s+"
+    r"|i\s+(?:want|need)\s+to\s+"
+    r"|i'?d\s+like\s+to\s+"
+    r")+",
     re.IGNORECASE,
 )
-_SHOW_GIVE_GET = re.compile(
-    r"^(?:show|give|get|tell|fetch|pull|display)\s+(?:me\s+)?",
+# Soft action verbs before the real ask ("see logs", "have the logs", "show me …").
+_SOFT_VERB = re.compile(
+    r"^(?:"
+    r"show|give|get|tell|fetch|pull|display|see|have|view|check|read|open|tail|"
+    r"dig\s+into"
+    r")\s+(?:me\s+|us\s+)?",
     re.IGNORECASE,
 )
 _TRAILING_PLEASE = re.compile(r"\s+please\.?$", re.IGNORECASE)
@@ -39,25 +50,24 @@ _CONFIDENCE_RUN = 0.8
 # --- Per-intent patterns (applied after normalize_intent_text) ---
 
 _FOCUSED_LOGS = re.compile(
-    r"^(?:show|get|fetch|pull)?\s*"
-    r"(?:its|the)?\s*"
+    r"^(?:its|the)?\s*"
     r"(?:last\s+(\d+)\s+)?"
     r"(?:log\s+lines?|logs?)$",
     re.IGNORECASE,
 )
 
-_LOGS_OF_TARGET = re.compile(
-    r"^(?:show|get|fetch|pull|tail|dig\s+into)?\s*"
-    r"(?:the\s+)?(?:last\s+(\d+)\s+lines?\s+of\s+)?"
-    r"(.+?)\s+logs?"
-    r"(?:\s+for\s+last\s+(\d+)\s+lines?)?$",
+# Structural logs shapes (verbs already stripped in normalize):
+#   "logs for pg_tileserv" / "the logs of api-server last 25 lines"
+#   "last 25 lines of api-server logs" / "pg tileserv logs"
+_LOGS_FOR_TARGET = re.compile(
+    r"^(?:the\s+)?logs?\s+(?:of|for|from)\s+(.+?)"
+    r"(?:\s+last\s+(\d+)\s+lines?)?$",
     re.IGNORECASE,
 )
-
-_LOGS_FOR_TARGET = re.compile(
-    r"^(?:show|get|fetch|pull|tail|dig\s+into)?\s*"
-    r"(?:the\s+)?logs?\s+(?:of|for|from)\s+(.+?)"
-    r"(?:\s+last\s+(\d+)\s+lines?)?$",
+_LOGS_OF_TARGET = re.compile(
+    r"^(?:last\s+(\d+)\s+lines?\s+of\s+)?"
+    r"(.+?)\s+logs?"
+    r"(?:\s+for\s+last\s+(\d+)\s+lines?)?$",
     re.IGNORECASE,
 )
 
@@ -118,8 +128,22 @@ def normalize_intent_text(user_text: str) -> str:
     text = normalize_user_text(user_text)
     if not text:
         return ""
-    text = _LEAD_IN.sub("", text).strip()
-    text = _SHOW_GIVE_GET.sub("", text).strip()
+    # Strip lead-ins / soft verbs until stable ("can we see the logs" → "logs …").
+    for _ in range(4):
+        nxt = _LEAD_IN.sub("", text).strip()
+        nxt = _SOFT_VERB.sub("", nxt).strip()
+        # Drop a lone leading "the " left after verb strip ("the logs for …").
+        nxt2 = re.sub(r"^the\s+", "", nxt, count=1, flags=re.IGNORECASE).strip()
+        # Only drop "the" when what remains still looks like an ask (logs/list/…).
+        if nxt2 != nxt and re.match(
+            r"^(logs?|containers?|uptime|inspect|details|info|start|stop|restart)\b",
+            nxt2,
+            re.IGNORECASE,
+        ):
+            nxt = nxt2
+        if nxt == text:
+            break
+        text = nxt
     text = _TRAILING_PLEASE.sub("", text).strip()
     return text
 
@@ -254,12 +278,29 @@ def resolve_intent(
 
 
 def _match_logs(lower: str) -> IntentMatch | None:
+    # Prefer "logs for <target>" so "logs for pg tileserv" is not parsed as
+    # target="logs for pg" via the "<target> logs" shape.
+    match = _LOGS_FOR_TARGET.fullmatch(lower)
+    if match:
+        target = _clean_target(match.group(1))
+        if target and not _looks_like_question(target) and not _bad_log_target(target):
+            args: dict[str, Any] = {"target": target}
+            if match.group(2):
+                args["tail"] = int(match.group(2))
+            return IntentMatch(
+                intent="logs",
+                tool="get_container_logs",
+                arguments=args,
+                confidence=0.95,
+                label="intent:logs",
+            )
+
     match = _LOGS_OF_TARGET.fullmatch(lower)
     if match:
         tail_a, target, tail_b = match.group(1), match.group(2), match.group(3)
         target = _clean_target(target)
-        if target and not _looks_like_question(target):
-            args: dict[str, Any] = {"target": target}
+        if target and not _looks_like_question(target) and not _bad_log_target(target):
+            args = {"target": target}
             tail = tail_a or tail_b
             if tail:
                 args["tail"] = int(tail)
@@ -270,22 +311,17 @@ def _match_logs(lower: str) -> IntentMatch | None:
                 confidence=0.95,
                 label="intent:logs",
             )
-
-    match = _LOGS_FOR_TARGET.fullmatch(lower)
-    if match:
-        target = _clean_target(match.group(1))
-        if target and not _looks_like_question(target):
-            args = {"target": target}
-            if match.group(2):
-                args["tail"] = int(match.group(2))
-            return IntentMatch(
-                intent="logs",
-                tool="get_container_logs",
-                arguments=args,
-                confidence=0.95,
-                label="intent:logs",
-            )
     return None
+
+
+def _bad_log_target(target: str) -> bool:
+    """Reject targets that are clearly not container names."""
+    t = target.strip().lower()
+    if not t or t in {"the", "a", "an", "my", "its", "all"}:
+        return True
+    if t.startswith("logs ") or t == "logs":
+        return True
+    return False
 
 
 def _unknown() -> IntentMatch:

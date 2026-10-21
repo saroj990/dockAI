@@ -240,13 +240,15 @@ dockai "show me uptime of running containers"
 dockai "show last 25 lines of timescaledb logs"
 dockai "logs for timescaledb"
 dockai "show me logs for timescaledb"   # same as above — filler stripped locally
+dockai "can we see logs for pg_tileserv"
+dockai "can we have logs for pg tileserv"  # spaces in name OK (resolved like hyphens)
 dockai "find containers named postgis"
 dockai "inspect timescaledb"
 dockai "show me details for postgis"
 dockai "stop api-server"              # still confirms before apply
 ```
 
-Shared normalize strips politeness (`please`, `can you`, `show me`, …) and trailing `containers` on log targets. Typos like `runnning` → `running` are fixed before matching.
+Shared normalize strips politeness and soft verbs (`please`, `can we`, `show me`, `see`, `have`, `let me`, …) then matches structural shapes like `logs for <name>`. Trailing `containers` on log targets is dropped. Typos like `runnning` → `running` are fixed before matching.
 
 **Still uses Ollama** (diagnosis / vague asks):
 
