@@ -249,7 +249,9 @@ dockai "what looks unhealthy?"
 dockai "which of these look stuck?"
 ```
 
-**Log troubleshooting** (`dockai ask` / `dockai chat`): for diagnosis asks about a named container, the agent calls `troubleshoot_container_logs` — inspect state plus deterministic log signal highlights (errors, OOM, panics, tracebacks) from Docker, then an Ollama summary that separates facts from hypotheses. Plain log tailing still uses `dockai logs` or `get_container_logs` shortcuts.
+**Log troubleshooting** (`dockai ask` / `dockai chat`): for diagnosis asks (`why…`, `what's wrong…`, restarting/failing), the agent **must** call `troubleshoot_container_logs` before any diagnosis text. Invented tool JSON / fake `docker_exec` stories are rejected and retried. The tool inspects state, scans recent logs for signals (errors, OOM, panics, tracebacks), then Ollama may summarize facts vs hypotheses. Plain log tailing still uses `dockai logs` or local intent shortcuts.
+
+**docker exec**: the model may call `exec_in_container`, which only **proposes** a command. The CLI asks `Run this docker exec command?` before anything runs (same confirm pattern as start/stop/restart).
 
 ### Name resolution (spaces, hyphens, typos)
 

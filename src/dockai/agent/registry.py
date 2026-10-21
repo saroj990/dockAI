@@ -19,6 +19,7 @@ from dockai.tools.containers import (
     restarting_containers,
     search_containers,
 )
+from dockai.tools.exec_cmd import propose_exec
 from dockai.tools.lifecycle import Action, propose_action
 from dockai.tools.troubleshoot import (
     DEFAULT_TROUBLESHOOT_TAIL,
@@ -339,6 +340,35 @@ def build_registry() -> dict[str, ToolSpec]:
             handler=lambda client, **_a: {
                 "containers": restarting_containers(client)
             },
+        ),
+        "exec_in_container": ToolSpec(
+            name="exec_in_container",
+            description=(
+                "Propose running a shell command inside a container (docker exec). "
+                "Does NOT run until the user confirms in the CLI. Use only when the "
+                "user explicitly wants a command run in the container; prefer "
+                "troubleshoot_container_logs for diagnosis. Never claim exec already ran."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Container name or ID.",
+                    },
+                    "command": {
+                        "type": "string",
+                        "description": "Command to run inside the container.",
+                    },
+                },
+                "required": ["target", "command"],
+                "additionalProperties": False,
+            },
+            handler=lambda client, **a: propose_exec(
+                client,
+                _require_str(a, "target"),
+                _require_str(a, "command"),
+            ),
         ),
         **_mutation_specs(),
     }
