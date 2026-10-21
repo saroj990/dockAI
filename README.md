@@ -229,9 +229,9 @@ dockai "can you pull only name and uptime of running containers"
 
 After a successful list/uptime/search/logs/inspect tool call, dockai **table-first** renders Docker data and skips a second Ollama summary.
 
-### NL shortcuts (skip Ollama)
+### Local intent first (skip Ollama)
 
-Clear phrases map straight to a tool. Timings show `shortcut:…` instead of `ollama #1`.
+NL turns run a **local intent pipeline** before Ollama: normalize filler → classify intent → extract slots → run the tool when confidence is high. Timings show `shortcut:…` (not `ollama #1`).
 
 ```bash
 dockai "show running containers"
@@ -239,14 +239,16 @@ dockai "show me exited containers"
 dockai "show me uptime of running containers"
 dockai "show last 25 lines of timescaledb logs"
 dockai "logs for timescaledb"
+dockai "show me logs for timescaledb"   # same as above — filler stripped locally
 dockai "find containers named postgis"
 dockai "inspect timescaledb"
+dockai "show me details for postgis"
 dockai "stop api-server"              # still confirms before apply
 ```
 
-Common typos like `runnning` → `running` are normalized before matching.
+Shared normalize strips politeness (`please`, `can you`, `show me`, …) and trailing `containers` on log targets. Typos like `runnning` → `running` are fixed before matching.
 
-**Still uses Ollama** (needs interpretation):
+**Still uses Ollama** (diagnosis / vague asks):
 
 ```bash
 dockai "why is my container restarting?"
