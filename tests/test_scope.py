@@ -161,7 +161,7 @@ def test_run_agent_overrides_model_all_containers():
     assert result.tool_results
     args = result.tool_results[0]["arguments"]
     assert args["all_containers"] is False
-    client.containers.list.assert_called_with(all=False)
+    client.containers.list.assert_called_with(all=False, sparse=True)
 
 
 def test_run_agent_exited_shortcut_filters():

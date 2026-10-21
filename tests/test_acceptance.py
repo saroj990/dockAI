@@ -29,7 +29,7 @@ def test_at01_list_running_only(mock_client):
         make_container(name="api-server", status="running"),
     ]
     rows = list_containers(mock_client, all_containers=False)
-    mock_client.containers.list.assert_called_with(all=False)
+    mock_client.containers.list.assert_called_with(all=False, sparse=True)
     assert [r["name"] for r in rows] == ["api-server"]
 
 

@@ -11,16 +11,38 @@ from dockai.tools.containers import (
     list_containers,
     resolve_container,
     search_containers,
+    summarize_container,
 )
 from dockai.tools.containers import _primary_name
 from tests.conftest import make_container
+
+
+def test_summarize_sparse_list_payload():
+    """docker ps–style sparse attrs: State is a string, Status is human text."""
+    container = MagicMock()
+    container.id = "abcd" * 16
+    container.name = None
+    container.status = "running"
+    container.attrs = {
+        "Id": container.id,
+        "Names": ["/postgis"],
+        "Image": "postgis/postgis:16-3.4",
+        "State": "running",
+        "Status": "Up 12 minutes (healthy)",
+    }
+    row = summarize_container(container)
+    assert row["name"] == "postgis"
+    assert row["status"] == "running"
+    assert row["image"] == "postgis/postgis:16-3.4"
+    assert row["uptime"]["kind"] == "uptime"
+    assert row["uptime"]["value"] == "12 minutes"
 
 
 def test_list_containers_running_only(mock_client):
     running = make_container(name="api-server")
     mock_client.containers.list.return_value = [running]
     result = list_containers(mock_client, all_containers=False)
-    mock_client.containers.list.assert_called_once_with(all=False)
+    mock_client.containers.list.assert_called_once_with(all=False, sparse=True)
     assert len(result) == 1
     assert result[0]["name"] == "api-server"
     assert result[0]["id"] == "a" * 12
@@ -44,7 +66,7 @@ def test_search_running_only(mock_client):
         make_container(name="flink-task"),
     ]
     result = search_containers(mock_client, "flink", running_only=True)
-    mock_client.containers.list.assert_called_with(all=False)
+    mock_client.containers.list.assert_called_with(all=False, sparse=True)
     assert result["scope"] == "running"
 
 

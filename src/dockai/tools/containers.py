@@ -71,7 +71,65 @@ def _primary_name(container: Container) -> str:
 
 
 def _state_dict(container: Container) -> dict[str, Any]:
-    return container.attrs.get("State") or {}
+    """
+    Normalize State from full inspect (dict) or sparse list (string).
+
+    Sparse `containers.list(sparse=True)` matches `docker ps` speed and returns
+    State as a string plus a human Status like "Up 10 minutes".
+    """
+    state = container.attrs.get("State")
+    if isinstance(state, dict):
+        return state
+    if isinstance(state, str) and state:
+        return {"Status": state}
+    return {}
+
+
+def _image_name(container: Container) -> str:
+    """Prefer list/inspect string fields; avoid Image API lookups on the hot path."""
+    image_attr = container.attrs.get("Image")
+    if isinstance(image_attr, str) and image_attr and not image_attr.startswith("sha256:"):
+        return image_attr
+    config = container.attrs.get("Config")
+    if isinstance(config, dict):
+        cfg_image = config.get("Image")
+        if isinstance(cfg_image, str) and cfg_image:
+            return cfg_image
+    image = getattr(container, "image", None)
+    if image is not None:
+        tags = getattr(image, "tags", None) or []
+        if tags:
+            return tags[0]
+        short_id = getattr(image, "short_id", None)
+        if short_id:
+            return short_id
+    return "unknown"
+
+
+def _uptime_from_list_status(status: str, list_status: str | None) -> dict[str, Any]:
+    """Map docker-ps Status text when StartedAt is not in the sparse payload."""
+    text = (list_status or status or "unknown").strip()
+    lower = text.lower()
+    state = (status or "").lower()
+    if state == "running" or lower.startswith("up "):
+        value = text
+        if lower.startswith("up "):
+            value = text[3:].strip()
+        value = re.sub(r"\s*\((?:healthy|unhealthy|health:\s*starting)\)\s*$", "", value, flags=re.I).strip()
+        return {
+            "kind": "uptime",
+            "label": "Uptime",
+            "value": value or text,
+            "started_at": None,
+            "finished_at": None,
+        }
+    return {
+        "kind": "stopped",
+        "label": "State",
+        "value": state or text,
+        "started_at": None,
+        "finished_at": None,
+    }
 
 
 def summarize_container(container: Container) -> dict[str, Any]:
@@ -80,22 +138,26 @@ def summarize_container(container: Container) -> dict[str, Any]:
     status = state.get("Status") or container.status or "unknown"
     started_at = state.get("StartedAt")
     finished_at = state.get("FinishedAt")
-    uptime = compute_uptime(
-        status=status,
-        started_at=started_at,
-        finished_at=finished_at,
-    )
-    image = container.image.tags[0] if container.image.tags else (
-        container.attrs.get("Config", {}).get("Image")
-        or (container.image.short_id if container.image else "unknown")
-    )
+    list_status = container.attrs.get("Status")
+    if started_at:
+        uptime = compute_uptime(
+            status=status,
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+    else:
+        uptime = _uptime_from_list_status(
+            status,
+            list_status if isinstance(list_status, str) else None,
+        )
+    restarting = bool(state.get("Restarting")) or str(status).lower() == "restarting"
     return {
         "id": _short_id(container.id),
         "full_id": container.id,
         "name": _primary_name(container),
         "status": status,
-        "image": image,
-        "restarting": bool(state.get("Restarting")),
+        "image": _image_name(container),
+        "restarting": restarting,
         "restarts": int(state.get("RestartCount") or 0),
         "exit_code": state.get("ExitCode"),
         "oom_killed": state.get("OOMKilled"),
@@ -115,13 +177,14 @@ def list_containers(
     """
     List containers; defaults to running only.
 
+    Uses sparse list (same API as `docker ps`) so listing stays fast on Docker Desktop.
     Optional status filter key: running | exited | stopped | dead | not_running.
     "stopped" matches Docker exited + dead. "not_running" excludes running status.
     """
     if status == "not_running":
         all_containers = True
     try:
-        containers = client.containers.list(all=all_containers)
+        containers = client.containers.list(all=all_containers, sparse=True)
     except APIError as exc:
         raise DockerUnavailableError(f"Failed to list containers: {exc}") from exc
     rows = [summarize_container(c) for c in containers]
@@ -231,7 +294,8 @@ def _match_candidates(
     target_l = target.strip().lower()
     target_n = _normalize_name(target)
     try:
-        containers = client.containers.list(all=all_containers)
+        # Sparse list is enough for name/ID match and keeps resolve near `docker ps` speed.
+        containers = client.containers.list(all=all_containers, sparse=True)
     except APIError as exc:
         raise DockerUnavailableError(f"Failed to list containers: {exc}") from exc
 

@@ -33,26 +33,40 @@ git clone https://github.com/saroj990/dockAI.git
 cd dockAI
 ```
 
-### 2. Create a virtualenv and install dockai
+### 2. One-time install
 
-Always work **inside** the venv. If you skip activation, `dockai` will not be found.
+From the repo root, run the setup script (creates `.venv`, installs dockai, verifies the CLI):
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-python -m pip install --upgrade pip
-pip install -e ".[dev]"
+./scripts/setup.sh
 ```
 
-Confirm the CLI is available:
+That picks Python **3.11+**, upgrades pip, installs the package, and copies `dockai.example.toml` → `dockai.toml` if needed. Re-run anytime; it is safe to repeat.
+
+Always work **inside** the venv afterward:
 
 ```bash
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 which dockai
-dockai --version
 dockai --help
 ```
 
 If `dockai: command not found`, you are not in the venv — run `source .venv/bin/activate` again.
+
+**Developers** who want a live editable install:
+
+```bash
+./scripts/setup.sh --editable
+```
+
+Manual install (same as the script, without helpers):
+
+```bash
+python3.12 -m venv .venv           # must be 3.11+
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+pip install ".[dev]"               # prefer this over -e on first setup
+```
 
 ### 3. Config file (recommended)
 
@@ -315,13 +329,13 @@ Docker still uses **your local** Docker Engine unless you change the Docker sock
 
 | Problem | Cause | Fix |
 |---------|--------|-----|
-| `dockai: command not found` | venv not activated, or install skipped | `source .venv/bin/activate` then `pip install -e ".[dev]"` |
+| `dockai: command not found` | venv not activated, or install skipped | `source .venv/bin/activate` then `./scripts/setup.sh` |
+| `No module named 'dockai'` | Broken / incomplete install | Re-run `./scripts/setup.sh` (uses a normal install, not a fragile editable link) |
 | `Docker Engine is unavailable` | Docker not running / no socket permission | Start Docker Desktop; re-check `docker ps` |
 | Ollama connection errors | Ollama not running or wrong host | `ollama serve`; set `host` in `dockai.toml` |
 | Model not found / bad tool calls | Config model ≠ pulled model | `ollama list` and match `[ollama] model` exactly |
 | `TOMLDecodeError: Cannot overwrite a value` | Duplicate key (e.g. two `model =` lines) | Keep a single `model` / `host` under `[ollama]` |
-| `python: command not found` | Only `python3` on PATH | Use `python3 -m venv .venv` |
-| Wrong Python (3.9/3.10) | Old system Python | Install 3.11+ and recreate `.venv` |
+| `python: command not found` / need 3.11+ | Old system Python | `brew install python@3.12` then `./scripts/setup.sh` |
 | Slow answers (10–20s+) | LLM path / large model | Prefer shortcut phrases or `dockai containers`; use `qwen2.5:3b` |
 
 ---
@@ -341,8 +355,8 @@ pytest -k typo -q       # fuzzy name-resolution tests
 
 | Path | Typical speed | When |
 |------|---------------|------|
-| Direct CLI (`dockai containers`) | ~docker speed | You know the command |
-| **NL shortcut** | ~100–300 ms | Common phrases (see Features) |
+| Direct CLI (`dockai containers`) | ~`docker ps` speed | Sparse Docker list API (not full inspect) |
+| **NL shortcut** | ~`docker ps` + tiny match cost | Common phrases (see Features) |
 | Table-first after Ollama | ~one model call | LLM picks tool; skip summary |
 | Full LLM | many seconds | Troubleshooting / vague asks |
 
