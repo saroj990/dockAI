@@ -109,12 +109,14 @@ cat <<EOF
 
 Setup complete.
 
-Next (every new terminal):
-  cd $ROOT
+Use dockai from any terminal (recommended — no activate needed):
+  ./scripts/link-cli.sh
+  # then: dockai chat
+
+Or inside this repo with the venv:
   source .venv/bin/activate
   dockai containers
 
-Optional NL mode: install Ollama, pull a tool-capable model, then:
-  dockai setup config
-  # or edit dockai.toml / set OLLAMA_HOST
+Prefer ./scripts/setup.sh (not pip install -e) so ModuleNotFoundError does not return.
+Optional NL mode: ollama + dockai setup config
 EOF

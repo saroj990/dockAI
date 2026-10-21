@@ -33,40 +33,31 @@ git clone https://github.com/saroj990/dockAI.git
 cd dockAI
 ```
 
-### 2. One-time install
-
-From the repo root, run the setup script (creates `.venv`, installs dockai, verifies the CLI):
+### 2. One-time install (then `dockai` works everywhere)
 
 ```bash
-./scripts/setup.sh
+./scripts/setup.sh      # venv + durable install (not fragile editable)
+./scripts/link-cli.sh   # symlink ~/.local/bin/dockai — no activate needed
 ```
 
-That picks Python **3.11+**, upgrades pip, installs the package, and copies `dockai.example.toml` → `dockai.toml` if needed. Re-run anytime; it is safe to repeat.
-
-Always work **inside** the venv afterward:
+Open a **new** terminal (or `source ~/.zshrc`), then from any directory:
 
 ```bash
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-which dockai
-dockai --help
+dockai chat
+dockai containers
 ```
 
-If `dockai: command not found`, you are not in the venv — run `source .venv/bin/activate` again.
+You should **not** need `source .venv/bin/activate` or `pip install -e` for normal use. The linked launcher auto-repairs a broken install.
 
-**Developers** who want a live editable install:
+If you see `No module named 'dockai'`, you are likely hitting an old `.venv/bin/dockai` on PATH — run `./scripts/link-cli.sh` and prefer `~/.local/bin/dockai`. Avoid `pip install -e` unless you are developing; use `./scripts/setup.sh` to reinstall.
+
+**Developers** (live code reload):
 
 ```bash
 ./scripts/setup.sh --editable
 ```
 
-Manual install (same as the script, without helpers):
-
-```bash
-python3.12 -m venv .venv           # must be 3.11+
-source .venv/bin/activate
-python -m pip install --upgrade pip setuptools wheel
-pip install ".[dev]"               # prefer this over -e on first setup
-```
+Re-run `./scripts/setup.sh` (without `-e`) if editable install breaks again.
 
 ### 3. Config file (recommended)
 
@@ -334,7 +325,7 @@ Docker still uses **your local** Docker Engine unless you change the Docker sock
 | Problem | Cause | Fix |
 |---------|--------|-----|
 | `dockai: command not found` | venv not activated, or install skipped | `source .venv/bin/activate` then `./scripts/setup.sh` |
-| `No module named 'dockai'` | Broken / incomplete install | Re-run `./scripts/setup.sh` (uses a normal install, not a fragile editable link) |
+| `No module named 'dockai'` | Broken editable install or old `.venv` script on PATH | `./scripts/setup.sh && ./scripts/link-cli.sh` then use a new terminal (`which dockai` → `~/.local/bin/dockai`) |
 | `Docker Engine is unavailable` | Docker not running / no socket permission | Start Docker Desktop; re-check `docker ps` |
 | Ollama connection errors | Ollama not running or wrong host | `ollama serve`; set `host` in `dockai.toml` |
 | Model not found / bad tool calls | Config model ≠ pulled model | `ollama list` and match `[ollama] model` exactly |
