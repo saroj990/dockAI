@@ -355,8 +355,8 @@ pytest -k typo -q       # fuzzy name-resolution tests
 
 | Path | Typical speed | When |
 |------|---------------|------|
-| Direct CLI (`dockai containers`) | ~docker speed | You know the command |
-| **NL shortcut** | ~100–300 ms | Common phrases (see Features) |
+| Direct CLI (`dockai containers`) | ~`docker ps` speed | Sparse Docker list API (not full inspect) |
+| **NL shortcut** | ~`docker ps` + tiny match cost | Common phrases (see Features) |
 | Table-first after Ollama | ~one model call | LLM picks tool; skip summary |
 | Full LLM | many seconds | Troubleshooting / vague asks |
 
