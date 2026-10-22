@@ -12,6 +12,7 @@ from typing import Any
 import docker
 
 from dockai.columns import validate_user_column_request
+from dockai.agent.help import try_dockai_help_response
 from dockai.agent.policy import check_restricted_request
 from dockai.agent.registry import (
     ToolSpec,
@@ -395,6 +396,27 @@ def run_agent(
         ]
     else:
         messages = list(history)
+
+    help_response = try_dockai_help_response(user_text)
+    if help_response is not None:
+        progress("Showing dockai commands…")
+        messages.append(ChatMessage(role="user", content=user_text))
+        messages.append(
+            ChatMessage(role="assistant", content=help_response.plain_intro)
+        )
+        return AgentResult(
+            answer="",
+            tool_results=[],
+            turns=0,
+            messages=messages,
+            focus_container=focus_container,
+            pending_action=None,
+            timings=[],
+            presentation={
+                "kind": "help",
+                "markdown": help_response.markdown,
+            },
+        )
 
     # Deterministic gate: refuse restricted asks before the LLM can mis-route them.
     restriction = check_restricted_request(user_text)
