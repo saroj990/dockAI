@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+import threading
+import time
 from contextlib import contextmanager
 from typing import Any, Iterator, Iterable
 
@@ -10,6 +13,10 @@ from rich.table import Table
 from rich.text import Text
 
 console = Console()
+
+# Strip a prior elapsed suffix when refreshing status text.
+_ELAPSED_SUFFIX_RE = re.compile(r"\s*\([^)]+\)\s*$")
+_RICH_TAG_RE = re.compile(r"\[\/?[^\]]+\]")
 
 
 def print_error(message: str) -> None:
@@ -20,13 +27,76 @@ def print_info(message: str) -> None:
     console.print(message)
 
 
+def append_elapsed_to_status_message(message: str, elapsed_seconds: float) -> str:
+    """Append wall time for spinner text, reusing footer formatting rules."""
+    plain = _RICH_TAG_RE.sub("", message).strip()
+    base = _ELAPSED_SUFFIX_RE.sub("", plain).strip()
+    return f"{base} ({format_elapsed(elapsed_seconds)})"
+
+
+class ElapsedStatusHandle:
+    """Rich status handle that keeps elapsed time on the spinner line."""
+
+    def __init__(
+        self,
+        status: Any,
+        start: float,
+        *,
+        tick_interval: float = 0.5,
+    ) -> None:
+        self._status = status
+        self._start = start
+        self._tick = tick_interval
+        self._message = ""
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def update(self, message: str) -> None:
+        """Set stage text; elapsed suffix is recomputed from the same start time."""
+        self._message = _RICH_TAG_RE.sub("", message).strip()
+        self._render()
+
+    def start(self) -> None:
+        def loop() -> None:
+            while not self._stop.wait(self._tick):
+                self._render()
+
+        self._thread = threading.Thread(target=loop, daemon=True, name="dockai-status-tick")
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+
+    def _render(self) -> None:
+        elapsed = time.perf_counter() - self._start
+        text = append_elapsed_to_status_message(self._message, elapsed)
+        self._status.update(f"[cyan]{text}[/cyan]")
+
+
 @contextmanager
 def busy_status(
     message: str = "Working on it — fetching results, please wait…",
+    *,
+    show_elapsed: bool = True,
+    tick_interval: float = 0.5,
 ) -> Iterator[Any]:
-    """Show a spinner while the agent or Docker work runs."""
+    """Show a spinner while work runs; optionally tick elapsed time on the same line."""
+    start = time.perf_counter()
     with console.status(f"[cyan]{message}[/cyan]", spinner="dots") as status:
-        yield status
+        if not show_elapsed:
+            yield status
+            return
+        handle = ElapsedStatusHandle(
+            status, start, tick_interval=tick_interval
+        )
+        handle.update(message)
+        handle.start()
+        try:
+            yield handle
+        finally:
+            handle.stop()
 
 
 def format_elapsed(seconds: float) -> str:
