@@ -26,6 +26,7 @@ from dockai.agent.scope import (
     reconcile_tool_for_list_intent,
 )
 from dockai.agent.shortcuts import match_shortcut, needs_docker_tool
+from dockai.errors import ToolCallingUnsupportedError
 from dockai.llm.base import ChatMessage, LLMProvider
 from dockai.present import presentation_from_tool, try_table_first
 
@@ -304,6 +305,59 @@ def _with_focus(user_text: str, focus: str | None) -> str:
     )
 
 
+def _llm_identifiers(llm: LLMProvider) -> tuple[str | None, str | None]:
+    model = getattr(llm, "model", None)
+    host = getattr(llm, "host", None)
+    return (
+        str(model) if model is not None else None,
+        str(host) if host is not None else None,
+    )
+
+
+def tool_calling_unsupported_message(
+    *,
+    model: str | None = None,
+    host: str | None = None,
+) -> str:
+    """User-facing copy when the model never returns Ollama tool_calls."""
+    if model and host:
+        target = f"Model `{model}` at {host}"
+    elif model:
+        target = f"Model `{model}`"
+    elif host:
+        target = f"Ollama at {host}"
+    else:
+        target = "The configured Ollama model"
+    return (
+        f"{target} did not return tool calls after two tries. "
+        "Natural-language Docker commands need a tool-capable model "
+        "(e.g. qwen2.5:3b or llama3.1:8b — see README). "
+        "Set `[ollama] model` in dockai.toml to match `ollama list`, "
+        "or use direct commands such as `dockai logs <container>`."
+    )
+
+
+def _should_raise_tool_calling_unsupported(
+    *,
+    consecutive_no_tool_calls: int,
+    collected: list[dict[str, Any]],
+    user_text: str,
+    focus_container: str | None,
+    answer: str,
+) -> bool:
+    """After two LLM turns without tools, fail if Docker is still required."""
+    if consecutive_no_tool_calls < 2 or collected:
+        return False
+    if not needs_docker_tool(user_text, focus_container=focus_container):
+        return False
+    return _should_nudge_missing_docker_call(
+        user_text,
+        focus_container=focus_container,
+        collected=collected,
+        answer=answer,
+    )
+
+
 def run_agent(
     user_text: str,
     *,
@@ -431,6 +485,8 @@ def run_agent(
         )
 
     model_calls = 0
+    llm_model, llm_host = _llm_identifiers(llm)
+    consecutive_no_tool_calls = 0
     for turn in range(1, max_turns + 1):
         progress("Asking the model — please wait…")
         model_calls += 1
@@ -440,6 +496,7 @@ def run_agent(
         messages.append(assistant)
 
         if assistant.tool_calls:
+            consecutive_no_tool_calls = 0
             batch: list[dict[str, Any]] = []
             for call in assistant.tool_calls:
                 progress(f"Fetching from Docker — {call.name}…")
@@ -496,6 +553,7 @@ def run_agent(
                 return _finish(caption, turn, presentation=direct)
             continue
 
+        consecutive_no_tool_calls += 1
         answer = (assistant.content or "").strip()
         if _looks_like_tool_dump(answer):
             grounded = _has_successful_troubleshoot(collected)
@@ -531,6 +589,18 @@ def run_agent(
             collected=collected,
             answer=answer,
         ):
+            if _should_raise_tool_calling_unsupported(
+                consecutive_no_tool_calls=consecutive_no_tool_calls,
+                collected=collected,
+                user_text=user_text,
+                focus_container=focus_container,
+                answer=answer,
+            ):
+                raise ToolCallingUnsupportedError(
+                    tool_calling_unsupported_message(
+                        model=llm_model, host=llm_host
+                    )
+                )
             progress("Model answered without calling Docker — retrying with a tool…")
             messages.append(ChatMessage(role="user", content=_NUDGE_DOCKER))
             continue
