@@ -33,40 +33,31 @@ git clone https://github.com/saroj990/dockAI.git
 cd dockAI
 ```
 
-### 2. One-time install
-
-From the repo root, run the setup script (creates `.venv`, installs dockai, verifies the CLI):
+### 2. One-time install (then `dockai` works everywhere)
 
 ```bash
-./scripts/setup.sh
+./scripts/setup.sh      # venv + durable install (not fragile editable)
+./scripts/link-cli.sh   # symlink ~/.local/bin/dockai — no activate needed
 ```
 
-That picks Python **3.11+**, upgrades pip, installs the package, and copies `dockai.example.toml` → `dockai.toml` if needed. Re-run anytime; it is safe to repeat.
-
-Always work **inside** the venv afterward:
+Open a **new** terminal (or `source ~/.zshrc`), then from any directory:
 
 ```bash
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-which dockai
-dockai --help
+dockai chat
+dockai containers
 ```
 
-If `dockai: command not found`, you are not in the venv — run `source .venv/bin/activate` again.
+You should **not** need `source .venv/bin/activate` or `pip install -e` for normal use. The linked launcher auto-repairs a broken install.
 
-**Developers** who want a live editable install:
+If you see `No module named 'dockai'`, you are likely hitting an old `.venv/bin/dockai` on PATH — run `./scripts/link-cli.sh` and prefer `~/.local/bin/dockai`. Avoid `pip install -e` unless you are developing; use `./scripts/setup.sh` to reinstall.
+
+**Developers** (live code reload):
 
 ```bash
 ./scripts/setup.sh --editable
 ```
 
-Manual install (same as the script, without helpers):
-
-```bash
-python3.12 -m venv .venv           # must be 3.11+
-source .venv/bin/activate
-python -m pip install --upgrade pip setuptools wheel
-pip install ".[dev]"               # prefer this over -e on first setup
-```
+Re-run `./scripts/setup.sh` (without `-e`) if editable install breaks again.
 
 ### 3. Config file (recommended)
 
@@ -229,9 +220,9 @@ dockai "can you pull only name and uptime of running containers"
 
 After a successful list/uptime/search/logs/inspect tool call, dockai **table-first** renders Docker data and skips a second Ollama summary.
 
-### NL shortcuts (skip Ollama)
+### Local intent first (skip Ollama)
 
-Clear phrases map straight to a tool. Timings show `shortcut:…` instead of `ollama #1`.
+NL turns run a **local intent pipeline** before Ollama: normalize filler → classify intent → extract slots → run the tool when confidence is high. Timings show `shortcut:…` (not `ollama #1`).
 
 ```bash
 dockai "show running containers"
@@ -239,14 +230,18 @@ dockai "show me exited containers"
 dockai "show me uptime of running containers"
 dockai "show last 25 lines of timescaledb logs"
 dockai "logs for timescaledb"
+dockai "show me logs for timescaledb"   # same as above — filler stripped locally
+dockai "can we see logs for pg_tileserv"
+dockai "can we have logs for pg tileserv"  # spaces in name OK (resolved like hyphens)
 dockai "find containers named postgis"
 dockai "inspect timescaledb"
+dockai "show me details for postgis"
 dockai "stop api-server"              # still confirms before apply
 ```
 
-Common typos like `runnning` → `running` are normalized before matching.
+Shared normalize strips politeness and soft verbs (`please`, `can we`, `show me`, `see`, `have`, `let me`, …) then matches structural shapes like `logs for <name>`. Trailing `containers` on log targets is dropped. Typos like `runnning` → `running` are fixed before matching.
 
-**Still uses Ollama** (needs interpretation):
+**Still uses Ollama** (diagnosis / vague asks):
 
 ```bash
 dockai "why is my container restarting?"
@@ -254,7 +249,9 @@ dockai "what looks unhealthy?"
 dockai "which of these look stuck?"
 ```
 
-**Log troubleshooting** (`dockai ask` / `dockai chat`): for diagnosis asks about a named container, the agent calls `troubleshoot_container_logs` — inspect state plus deterministic log signal highlights (errors, OOM, panics, tracebacks) from Docker, then an Ollama summary that separates facts from hypotheses. Plain log tailing still uses `dockai logs` or `get_container_logs` shortcuts.
+**Log troubleshooting** (`dockai ask` / `dockai chat`): for diagnosis asks (`why…`, `what's wrong…`, restarting/failing), the agent **must** call `troubleshoot_container_logs` before any diagnosis text. Invented tool JSON / fake `docker_exec` stories are rejected and retried. The tool inspects state, scans recent logs for signals (errors, OOM, panics, tracebacks), then Ollama may summarize facts vs hypotheses. Plain log tailing still uses `dockai logs` or local intent shortcuts.
+
+**docker exec**: the model may call `exec_in_container`, which only **proposes** a command. The CLI asks `Run this docker exec command?` before anything runs (same confirm pattern as start/stop/restart).
 
 ### Name resolution (spaces, hyphens, typos)
 
@@ -330,7 +327,7 @@ Docker still uses **your local** Docker Engine unless you change the Docker sock
 | Problem | Cause | Fix |
 |---------|--------|-----|
 | `dockai: command not found` | venv not activated, or install skipped | `source .venv/bin/activate` then `./scripts/setup.sh` |
-| `No module named 'dockai'` | Broken / incomplete install | Re-run `./scripts/setup.sh` (uses a normal install, not a fragile editable link) |
+| `No module named 'dockai'` | Broken editable install or old `.venv` script on PATH | `./scripts/setup.sh && ./scripts/link-cli.sh` then use a new terminal (`which dockai` → `~/.local/bin/dockai`) |
 | `Docker Engine is unavailable` | Docker not running / no socket permission | Start Docker Desktop; re-check `docker ps` |
 | Ollama connection errors | Ollama not running or wrong host | `ollama serve`; set `host` in `dockai.toml` |
 | Model not found / bad tool calls | Config model ≠ pulled model | `ollama list` and match `[ollama] model` exactly |

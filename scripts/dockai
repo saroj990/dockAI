@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Stable launcher: no venv activate needed. Repairs a broken install if needed.
+# Safe to symlink onto PATH (resolves through symlinks to the repo root).
+set -euo pipefail
+
+resolve_root() {
+  local src="${BASH_SOURCE[0]}"
+  while [[ -L "$src" ]]; do
+    local dir
+    dir="$(cd "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="$dir/$src"
+  done
+  cd "$(dirname "$src")/.." && pwd
+}
+
+ROOT="$(resolve_root)"
+VENV_PY="$ROOT/.venv/bin/python"
+SETUP="$ROOT/scripts/setup.sh"
+
+ensure_ready() {
+  if [[ ! -x "$VENV_PY" ]]; then
+    echo "dockai: creating environment (one-time)…" >&2
+    "$SETUP"
+  fi
+  if ! "$VENV_PY" -c "import dockai" >/dev/null 2>&1; then
+    echo "dockai: install looks broken — repairing…" >&2
+    # Non-editable install is durable (avoids ModuleNotFoundError from bad editable .pth).
+    "$SETUP"
+  fi
+}
+
+ensure_ready
+exec "$VENV_PY" -m dockai "$@"

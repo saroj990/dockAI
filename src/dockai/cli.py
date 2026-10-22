@@ -98,17 +98,35 @@ def _print_pending(pending: dict[str, Any]) -> None:
         f"[bold]Target:[/bold] {container.get('name')} "
         f"({container.get('id')}) — status: {container.get('status')}"
     )
+    if pending.get("action") == "exec" and pending.get("command"):
+        console.print(f"[bold]Command:[/bold] {pending['command']}")
 
 
 def _confirm_and_apply(client: Any, pending: dict[str, Any]) -> None:
     """Ask the user, then apply in-app (LLM cannot bypass this)."""
+    from dockai.tools.exec_cmd import apply_exec
+
     _print_pending(pending)
-    if not typer.confirm("Proceed with this change?", default=False):
+    action = pending.get("action")
+    prompt = (
+        "Run this docker exec command?"
+        if action == "exec"
+        else "Proceed with this change?"
+    )
+    if not typer.confirm(prompt, default=False):
         console.print("[yellow]Cancelled — no changes made.[/yellow]")
         return
-    action: Action = pending["action"]
     target = pending["target"]
     with busy_status(f"Applying {action} — please wait…"):
+        if action == "exec":
+            outcome = apply_exec(client, target, pending["command"])
+            console.print(f"[green]{outcome['message']}[/green]")
+            output = outcome.get("output") or ""
+            if output.strip():
+                console.print(output.rstrip())
+            elif outcome.get("truncated"):
+                console.print("[dim](output truncated)[/dim]")
+            return
         outcome = apply_action(client, action, target)
     console.print(f"[green]{outcome['message']}[/green]")
 

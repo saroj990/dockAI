@@ -22,6 +22,7 @@ from dockai.agent.registry import (
 from dockai.agent.scope import (
     apply_list_scope,
     effective_list_user_text,
+    normalize_user_text,
     reconcile_tool_for_list_intent,
 )
 from dockai.agent.shortcuts import match_shortcut, needs_docker_tool
@@ -30,7 +31,9 @@ from dockai.present import presentation_from_tool, try_table_first
 
 SYSTEM_PROMPT = """You are dockai, a Docker inspection assistant.
 Use only the provided tools for container facts. Never invent container IDs, names,
-statuses, log lines, timestamps, or success/failure.
+statuses, log lines, timestamps, mounts, permissions, or success/failure.
+Never invent tool results or print fake JSON that looks like a tool response
+(e.g. {"ok": true, "tool": ...}). Only the tool-calling interface runs tools.
 If a tool returns ok=false, call the same tool again with corrected arguments, or
 briefly explain the error. Never print raw tool-call JSON to the user.
 Never claim a container is missing, running, stopped, or that logs were fetched
@@ -52,14 +55,18 @@ Default log window is the last 100 lines unless the user asks otherwise.
 When the user asks for logs, log lines, tail, or to dig into logs, call
 get_container_logs — not inspect_container.
 When the user asks why a container is failing, restarting, unhealthy, or wants
-log troubleshooting/diagnosis, call troubleshoot_container_logs (not get_container_logs
-alone). Separate observed facts from hypotheses; cite log lines only if the tool
-returned them.
+log troubleshooting/diagnosis, you MUST call troubleshoot_container_logs before
+any diagnosis answer (not get_container_logs alone, and not a narrative without
+tools). Separate observed facts from hypotheses; cite log lines only if that tool
+returned them. Never claim you already fixed permissions or restarted a container.
 For follow-ups like "that container" or "its logs", use the session focused container
 only when the context marks exactly one. If unclear, ask which container.
 To start, stop, or restart a container, call start_container / stop_container /
 restart_container. Those tools only propose the change; the CLI asks the user to
 confirm before anything runs. Never claim you already stopped or started a container.
+To run a command inside a container (docker exec), call exec_in_container. That
+only proposes the command; the CLI asks the user to confirm before it runs.
+Never claim you already ran docker exec or adjusted files/permissions.
 
 Restricted (say clearly "Not supported", do not call mutation tools):
 - delete/remove/rm containers, images, volumes
@@ -69,7 +76,7 @@ Never substitute stop/restart when the user asked to delete or remove.
 Never offer to stop the focused container as an alternative to a restricted action
 unless the user explicitly asks to stop that container by name.
 If the user says only "yes"/"ok", only propose a mutation if your previous message
-already proposed that exact start/stop/restart. Otherwise ask what they want.
+already proposed that exact start/stop/restart/exec. Otherwise ask what they want.
 """
 
 _NUDGE = (
@@ -82,6 +89,22 @@ _NUDGE_DOCKER = (
     "container status or errors from earlier messages — the user may have "
     "corrected the name. Call get_container_logs, inspect_container, "
     "restart_container, or the appropriate list/search tool, then answer."
+)
+
+_NUDGE_DIAGNOSIS = (
+    "This is a diagnosis ask. Call troubleshoot_container_logs with the container "
+    "name/ID now (tool-calling interface). Do not invent logs, mounts, "
+    "permissions, docker_exec output, or claim you already fixed or restarted "
+    "anything. After the tool returns real data, summarize facts vs hypotheses."
+)
+
+_DIAGNOSIS_ASK_RE = re.compile(
+    r"\b("
+    r"why|how\s+come|troubleshoot|diagnos|"
+    r"what('?s|\s+is|\s+could|\s+might)\s+wrong|"
+    r"failing|broken|unhealthy|restarting"
+    r")\b",
+    re.IGNORECASE,
 )
 
 _STALE_DOCKER_CLAIM_RE = re.compile(
@@ -99,6 +122,20 @@ _TOOL_DUMP_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+# Hallucinated "I already ran tools" narratives (common with weak local models).
+_FABRICATED_TOOL_RE = re.compile(
+    r"("
+    r'"ok"\s*:\s*true|'
+    r'"tool"\s*:\s*"|'
+    r"\bdocker_exec\b|"
+    r"```json|"
+    r"\bI\s+(?:have\s+)?(?:already\s+)?(?:adjusted|fixed|restarted|ran)\b|"
+    r"\bAfter\s+fixing\b|"
+    r"\bStep\s+\d+\s*:"
+    r")",
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class AgentResult:
@@ -112,6 +149,19 @@ class AgentResult:
     timings: list[tuple[str, float]] = field(default_factory=list)
     # When set, CLI renders Rich output from Docker and skips LLM narration.
     presentation: dict[str, Any] | None = None
+
+
+def _is_diagnosis_ask(user_text: str) -> bool:
+    text = normalize_user_text(user_text)
+    return bool(text and _DIAGNOSIS_ASK_RE.search(text))
+
+
+def _has_successful_troubleshoot(collected: list[dict[str, Any]]) -> bool:
+    return any(
+        item.get("tool") == "troubleshoot_container_logs"
+        and (item.get("result") or {}).get("ok")
+        for item in collected
+    )
 
 
 def _should_nudge_missing_docker_call(
@@ -128,11 +178,28 @@ def _should_nudge_missing_docker_call(
     return bool(_STALE_DOCKER_CLAIM_RE.search(answer or ""))
 
 
+def _should_nudge_diagnosis(
+    user_text: str,
+    *,
+    collected: list[dict[str, Any]],
+    answer: str,
+) -> bool:
+    """Diagnosis answers require a real troubleshoot_container_logs result."""
+    if not _is_diagnosis_ask(user_text):
+        return False
+    if _has_successful_troubleshoot(collected):
+        return False
+    # Always nudge until the tool runs — including fake JSON narratives.
+    return True
+
+
 def _looks_like_tool_dump(text: str) -> bool:
     stripped = (text or "").strip()
     if not stripped:
         return False
     if _TOOL_DUMP_RE.search(stripped):
+        return True
+    if _FABRICATED_TOOL_RE.search(stripped):
         return True
     if stripped.startswith("{") and "parameters" in stripped:
         return True
@@ -431,8 +498,31 @@ def run_agent(
 
         answer = (assistant.content or "").strip()
         if _looks_like_tool_dump(answer):
-            progress("Retrying with a cleaner tool call…")
-            messages.append(ChatMessage(role="user", content=_NUDGE))
+            grounded = _has_successful_troubleshoot(collected)
+            classic_dump = bool(
+                _TOOL_DUMP_RE.search(answer)
+                or (answer.startswith("{") and "parameters" in answer)
+            )
+            # After real troubleshoot evidence, allow a prose summary even if it
+            # says "step" / "fixed" casually; still reject raw tool-call dumps.
+            if not (grounded and not classic_dump):
+                if _is_diagnosis_ask(user_text) and not grounded:
+                    progress("Retrying — diagnosis needs real Docker evidence…")
+                    messages.append(
+                        ChatMessage(role="user", content=_NUDGE_DIAGNOSIS)
+                    )
+                else:
+                    progress("Retrying with a cleaner tool call…")
+                    messages.append(ChatMessage(role="user", content=_NUDGE))
+                continue
+
+        if _should_nudge_diagnosis(
+            user_text,
+            collected=collected,
+            answer=answer,
+        ):
+            progress("Diagnosis requires troubleshoot_container_logs — retrying…")
+            messages.append(ChatMessage(role="user", content=_NUDGE_DIAGNOSIS))
             continue
 
         if _should_nudge_missing_docker_call(
@@ -455,6 +545,16 @@ def run_agent(
         return _finish(answer, turn)
 
     fallback = _answer_from_last_failure(collected)
+    if _is_diagnosis_ask(user_text) and not _has_successful_troubleshoot(collected):
+        return _finish(
+            fallback
+            or (
+                "I could not gather Docker evidence for this diagnosis "
+                "(troubleshoot_container_logs did not run successfully). "
+                "Try: dockai logs <container> — or retry with a tool-capable model."
+            ),
+            max_turns,
+        )
     return _finish(
         fallback
         or (
