@@ -176,10 +176,6 @@ def test_session_corrected_name_after_failed_inspect_calls_logs_tool():
             ),
             ChatMessage(
                 role="assistant",
-                content="Still not found — cannot fetch logs.",
-            ),
-            ChatMessage(
-                role="assistant",
                 tool_calls=[
                     ToolCall(
                         id="2",

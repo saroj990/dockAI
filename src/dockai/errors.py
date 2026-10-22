@@ -19,3 +19,7 @@ class AmbiguousContainerError(DockaiError):
     def __init__(self, message: str, matches: list[dict]) -> None:
         super().__init__(message)
         self.matches = matches
+
+
+class ToolCallingUnsupportedError(DockaiError):
+    """Ollama model did not return tool_calls when Docker tools were required."""
