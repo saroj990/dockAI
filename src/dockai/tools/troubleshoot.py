@@ -7,6 +7,7 @@ from typing import Any
 
 import docker
 
+from dockai.diagnosis_summary import validate_status_for_troubleshoot
 from dockai.tools.containers import get_container_logs, inspect_container
 
 DEFAULT_TROUBLESHOOT_TAIL = 150
@@ -83,10 +84,6 @@ def troubleshoot_container_logs(
     """Inspect container state and analyze recent logs for troubleshooting."""
     effective_tail = tail if tail is not None else DEFAULT_TROUBLESHOOT_TAIL
     inspect_data = inspect_container(client, target)
-    logs_data = get_container_logs(client, target, tail=effective_tail, full=False)
-    log_text = logs_data.get("logs") or ""
-    analysis = analyze_log_text(log_text)
-
     inspect_facts = {
         "name": inspect_data.get("name"),
         "id": inspect_data.get("id"),
@@ -100,11 +97,16 @@ def troubleshoot_container_logs(
         "uptime": inspect_data.get("uptime"),
         "image": inspect_data.get("image"),
     }
+    status_validation = validate_status_for_troubleshoot(inspect_facts)
+    logs_data = get_container_logs(client, target, tail=effective_tail, full=False)
+    log_text = logs_data.get("logs") or ""
+    analysis = analyze_log_text(log_text)
 
     return {
         "container": inspect_data.get("name") or target,
         "id": inspect_data.get("id"),
         "inspect": inspect_facts,
+        "status_validation": status_validation,
         "logs": logs_data,
         "analysis": analysis,
     }
