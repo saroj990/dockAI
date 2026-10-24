@@ -13,3 +13,5 @@ docker_ai_agent_context_and_scope*
 # Local overrides (keep dockai.example.toml tracked)
 dockai.toml
 *ISSUES.md
+# Local GitHub issue drafts (copy-paste); see .cursor/issue-template.md
+issues/
