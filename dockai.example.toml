@@ -13,6 +13,10 @@ host = "http://127.0.0.1:11434"
 model = "llama3.1:8b"
 # Request timeout in seconds
 timeout = 120
+# Preflight reachability check (seconds) before NL / chat uses Ollama
+health_timeout = 10
+# Optional fallback when host is remote and unreachable (default: local 127.0.0.1:11434)
+# fallback_host = "http://127.0.0.1:11434"
 
 [docker]
 # Docker Engine API timeout in seconds

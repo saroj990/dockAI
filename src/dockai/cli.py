@@ -26,7 +26,8 @@ from dockai.formatting import (
     print_logs,
     print_search,
 )
-from dockai.llm.ollama import OllamaProvider
+from dockai.llm.ollama import OllamaNotFoundError, OllamaProvider
+from dockai.llm.resolve_host import settings_with_resolved_ollama
 from dockai.present import render_presentation
 from dockai.tools import (
     apply_action,
@@ -135,13 +136,32 @@ def _ctx_settings(ctx: typer.Context) -> Settings:
     return ctx.ensure_object(dict).setdefault("settings", load_settings())
 
 
+def _prepare_ollama_settings(
+    settings: Settings,
+    model: str | None = None,
+) -> Settings:
+    """Preflight Ollama and apply local fallback when configured remote is down."""
+    cfg = replace(settings, ollama_model=model or settings.ollama_model)
+    try:
+        cfg, resolved = settings_with_resolved_ollama(cfg)
+    except OllamaNotFoundError:
+        raise
+    if resolved.fallback_notice:
+        console.print(f"[dim]{resolved.fallback_notice}[/dim]")
+    return cfg
+
+
 def _run_ask(
     prompt: str,
     *,
     settings: Settings,
     model: str | None = None,
 ) -> None:
-    cfg = replace(settings, ollama_model=model or settings.ollama_model)
+    try:
+        cfg = _prepare_ollama_settings(settings, model=model)
+    except OllamaNotFoundError as exc:
+        _handle(exc)
+        return
     llm = OllamaProvider(settings=cfg, model=model)
     try:
         started = time.perf_counter()
@@ -235,6 +255,9 @@ def config_cmd(ctx: typer.Context) -> None:
     console.print(f"[bold]ollama.host:[/bold] {settings.ollama_host}")
     console.print(f"[bold]ollama.model:[/bold] {settings.ollama_model}")
     console.print(f"[bold]ollama.timeout:[/bold] {settings.ollama_timeout}")
+    console.print(f"[bold]ollama.health_timeout:[/bold] {settings.ollama_health_timeout}")
+    fallback = settings.ollama_fallback_host or "(default local 127.0.0.1:11434 when remote fails)"
+    console.print(f"[bold]ollama.fallback_host:[/bold] {fallback}")
     console.print(f"[bold]docker.timeout:[/bold] {settings.docker_timeout}")
     console.print(f"[bold]diagnostics.verbose:[/bold] {settings.verbose}")
 
@@ -293,7 +316,11 @@ def chat_cmd(
 ) -> None:
     """Interactive chat with follow-ups in one session."""
     settings = _ctx_settings(ctx)
-    cfg = replace(settings, ollama_model=model or settings.ollama_model)
+    try:
+        cfg = _prepare_ollama_settings(settings, model=model)
+    except OllamaNotFoundError as exc:
+        _handle(exc)
+        return
     llm = OllamaProvider(settings=cfg, model=model)
     try:
         client = get_client(settings=cfg)

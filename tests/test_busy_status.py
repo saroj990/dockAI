@@ -68,6 +68,10 @@ def test_cli_ask_still_prints_completed_footer():
         patch("dockai.cli.run_agent", return_value=result),
         patch("dockai.cli.print_elapsed") as print_elapsed,
         patch("dockai.cli.busy_status") as busy_status,
+        patch(
+            "dockai.cli._prepare_ollama_settings",
+            side_effect=lambda settings, model=None: settings,
+        ),
     ):
         busy_status.return_value.__enter__ = MagicMock(
             return_value=MagicMock(update=MagicMock())
