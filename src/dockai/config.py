@@ -14,7 +14,8 @@ DEFAULT_OLLAMA_PORT = 11434
 DEFAULT_OLLAMA_HOST = f"http://127.0.0.1:{DEFAULT_OLLAMA_PORT}"
 DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
 DEFAULT_OLLAMA_TIMEOUT = 120.0
-DEFAULT_OLLAMA_HEALTH_TIMEOUT = 10.0
+DEFAULT_OLLAMA_HEALTH_TIMEOUT = 5.0
+MAX_OLLAMA_HEALTH_TIMEOUT = 5.0
 DEFAULT_DOCKER_TIMEOUT = 60.0
 
 
@@ -25,6 +26,7 @@ class Settings:
     ollama_timeout: float = DEFAULT_OLLAMA_TIMEOUT
     ollama_health_timeout: float = DEFAULT_OLLAMA_HEALTH_TIMEOUT
     ollama_fallback_host: str | None = None
+    ollama_fallback_model: str | None = None
     docker_timeout: float = DEFAULT_DOCKER_TIMEOUT
     verbose: bool = False
     config_path: Path | None = None
@@ -69,6 +71,11 @@ def _as_float(value: object, default: float) -> float:
         return max(1.0, float(value))
     except (TypeError, ValueError):
         return default
+
+
+def _as_health_timeout(value: object) -> float:
+    """Preflight ping budget (seconds); capped for fast fallback to local Ollama."""
+    return min(MAX_OLLAMA_HEALTH_TIMEOUT, _as_float(value, DEFAULT_OLLAMA_HEALTH_TIMEOUT))
 
 
 def _as_bool(value: object, default: bool) -> bool:
@@ -176,13 +183,11 @@ def load_settings(
         ollama_timeout = _as_float(ollama.get("timeout"), DEFAULT_OLLAMA_TIMEOUT)
 
     if os.getenv("DOCKAI_OLLAMA_HEALTH_TIMEOUT"):
-        ollama_health_timeout = _as_float(
-            os.getenv("DOCKAI_OLLAMA_HEALTH_TIMEOUT"), DEFAULT_OLLAMA_HEALTH_TIMEOUT
+        ollama_health_timeout = _as_health_timeout(
+            os.getenv("DOCKAI_OLLAMA_HEALTH_TIMEOUT")
         )
     else:
-        ollama_health_timeout = _as_float(
-            ollama.get("health_timeout"), DEFAULT_OLLAMA_HEALTH_TIMEOUT
-        )
+        ollama_health_timeout = _as_health_timeout(ollama.get("health_timeout"))
 
     fallback_raw = os.getenv("DOCKAI_OLLAMA_FALLBACK_HOST") or ollama.get("fallback_host")
     ollama_fallback_host: str | None
@@ -190,6 +195,15 @@ def load_settings(
         ollama_fallback_host = normalize_ollama_host(str(fallback_raw), require_ip=False)
     else:
         ollama_fallback_host = None
+
+    fallback_model_raw = os.getenv("DOCKAI_OLLAMA_FALLBACK_MODEL") or ollama.get(
+        "fallback_model"
+    )
+    ollama_fallback_model: str | None
+    if fallback_model_raw:
+        ollama_fallback_model = str(fallback_model_raw).strip()
+    else:
+        ollama_fallback_model = None
 
     if os.getenv("DOCKAI_DOCKER_TIMEOUT"):
         docker_timeout = _as_float(os.getenv("DOCKAI_DOCKER_TIMEOUT"), DEFAULT_DOCKER_TIMEOUT)
@@ -208,6 +222,7 @@ def load_settings(
         ollama_timeout=ollama_timeout,
         ollama_health_timeout=ollama_health_timeout,
         ollama_fallback_host=ollama_fallback_host,
+        ollama_fallback_model=ollama_fallback_model,
         docker_timeout=docker_timeout,
         verbose=verbose,
         config_path=path,

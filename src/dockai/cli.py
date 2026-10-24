@@ -27,7 +27,7 @@ from dockai.formatting import (
     print_search,
 )
 from dockai.llm.ollama import OllamaNotFoundError, OllamaProvider
-from dockai.llm.resolve_host import settings_with_resolved_ollama
+from dockai.llm.resolve_host import is_loopback_ollama_host, settings_with_resolved_ollama
 from dockai.present import render_presentation
 from dockai.tools import (
     apply_action,
@@ -136,6 +136,14 @@ def _ctx_settings(ctx: typer.Context) -> Settings:
     return ctx.ensure_object(dict).setdefault("settings", load_settings())
 
 
+def _ollama_preflight_status_message(settings: Settings) -> str:
+    host = settings.ollama_host.rstrip("/")
+    model = settings.ollama_model
+    if is_loopback_ollama_host(host):
+        return f"Pinging Ollama ({model})…"
+    return f"Pinging remote Ollama ({model})…"
+
+
 def _prepare_ollama_settings(
     settings: Settings,
     model: str | None = None,
@@ -143,7 +151,10 @@ def _prepare_ollama_settings(
     """Preflight Ollama and apply local fallback when configured remote is down."""
     cfg = replace(settings, ollama_model=model or settings.ollama_model)
     try:
-        cfg, resolved = settings_with_resolved_ollama(cfg)
+        with busy_status(_ollama_preflight_status_message(cfg)) as status:
+            cfg, resolved = settings_with_resolved_ollama(
+                cfg, on_progress=status.update
+            )
     except OllamaNotFoundError:
         raise
     if resolved.fallback_notice:
@@ -258,6 +269,8 @@ def config_cmd(ctx: typer.Context) -> None:
     console.print(f"[bold]ollama.health_timeout:[/bold] {settings.ollama_health_timeout}")
     fallback = settings.ollama_fallback_host or "(default local 127.0.0.1:11434 when remote fails)"
     console.print(f"[bold]ollama.fallback_host:[/bold] {fallback}")
+    fb_model = settings.ollama_fallback_model or "(same as ollama.model when falling back)"
+    console.print(f"[bold]ollama.fallback_model:[/bold] {fb_model}")
     console.print(f"[bold]docker.timeout:[/bold] {settings.docker_timeout}")
     console.print(f"[bold]diagnostics.verbose:[/bold] {settings.verbose}")
 

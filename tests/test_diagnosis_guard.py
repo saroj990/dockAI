@@ -81,12 +81,13 @@ def test_hallucinated_diagnosis_does_not_return_fake_story():
         client=client,
         max_turns=6,
     )
-    assert not any(
-        t["tool"] == "troubleshoot_container_logs" for t in result.tool_results
+    assert any(
+        t["tool"] == "troubleshoot_container_logs" and t["result"].get("ok")
+        for t in result.tool_results
     )
     assert "permissions" not in result.answer.lower()
-    assert "docker evidence" in result.answer.lower() or "troubleshoot" in result.answer.lower()
-    assert all(label.startswith("ollama") for label, _ in result.timings)
+    assert "Docker inspect" in result.answer
+    assert len(llm.calls) == 0
 
 
 def test_diagnosis_with_real_troubleshoot_summarizes():

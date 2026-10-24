@@ -20,6 +20,8 @@ from dockai.agent.registry import (
     execute_tool,
     ollama_tool_schemas,
 )
+from dockai.agent.intent import reconcile_troubleshoot_target
+from dockai.agent.target_match import refine_tool_target
 from dockai.agent.scope import (
     apply_list_scope,
     effective_list_user_text,
@@ -479,6 +481,9 @@ def run_agent(
         shortcut_args = apply_list_scope(
             list_text, shortcut.tool, shortcut.arguments
         )
+        shortcut_args = refine_tool_target(
+            client, shortcut_args, focus_container=focus_container
+        )
         t0 = time.perf_counter()
         result = execute_tool(
             registry, client, shortcut.tool, shortcut_args
@@ -506,6 +511,23 @@ def run_agent(
         pending = _pending_from_results(collected)
         if pending is not None:
             return _finish(_format_pending(pending), 0)
+        if result.get("ok") and shortcut.tool == "troubleshoot_container_logs":
+            data = result.get("data")
+            if isinstance(data, dict):
+                progress("Summarizing from Docker inspect and logs…")
+                built = presentation_from_tool(
+                    "troubleshoot_container_logs",
+                    data,
+                )
+                diagnosis_text = build_diagnosis_answer(user_text, data)
+                messages.append(
+                    ChatMessage(role="assistant", content=diagnosis_text)
+                )
+                return _finish(
+                    diagnosis_text,
+                    0,
+                    presentation=built,
+                )
         if result.get("ok"):
             direct = try_table_first([item], user_text=list_text)
             if direct is not None:
@@ -543,6 +565,17 @@ def run_agent(
                     call.name,
                     call.arguments,
                     list_context=list_context,
+                )
+                call_args = reconcile_troubleshoot_target(
+                    user_text,
+                    tool_name,
+                    call_args,
+                    focus_container=focus_container,
+                )
+                call_args = refine_tool_target(
+                    client,
+                    call_args,
+                    focus_container=focus_container,
                 )
                 t1 = time.perf_counter()
                 result = execute_tool(registry, client, tool_name, call_args)

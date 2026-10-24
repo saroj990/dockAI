@@ -23,6 +23,7 @@ def _settings(host: str, *, model: str = "qwen2.5:3b") -> Settings:
         ollama_timeout=30.0,
         ollama_health_timeout=5.0,
         ollama_fallback_host=None,
+        ollama_fallback_model=None,
         docker_timeout=60.0,
         verbose=False,
         config_path=None,
@@ -55,6 +56,7 @@ def test_resolve_ollama_host_primary_ok():
 
 def test_resolve_ollama_host_remote_fail_local_ok():
     settings = _settings("http://203.0.113.99:11434")
+    stages: list[str] = []
 
     def probe(host: str, _timeout: float) -> bool:
         return host.rstrip("/") == DEFAULT_OLLAMA_HOST.rstrip("/")
@@ -63,10 +65,16 @@ def test_resolve_ollama_host_remote_fail_local_ok():
         "dockai.llm.resolve_host._model_available",
         return_value=True,
     ):
-        resolved = resolve_ollama_host(settings, probe=probe)
+        resolved = resolve_ollama_host(
+            settings,
+            probe=probe,
+            on_progress=stages.append,
+        )
     assert resolved.used_fallback is True
     assert resolved.host == DEFAULT_OLLAMA_HOST.rstrip("/")
     assert "unreachable" in (resolved.fallback_notice or "")
+    assert stages[0] == "Pinging remote Ollama (qwen2.5:3b)…"
+    assert stages[1].startswith("Pinging local model (")
 
 
 def test_resolve_ollama_host_both_fail_message():
@@ -96,6 +104,26 @@ def test_no_fallback_when_primary_is_local():
     assert calls == ["http://127.0.0.1:11434"]
 
 
+def test_resolve_ollama_uses_fallback_model_when_configured():
+    settings = replace(
+        _settings("http://203.0.113.99:11434", model="qwen2.5:7b"),
+        ollama_fallback_model="qwen2.5:3b",
+    )
+
+    def probe(host: str, _timeout: float) -> bool:
+        return is_loopback_ollama_host(host)
+
+    def model_ok(host: str, model: str, *, timeout: float) -> bool:
+        assert host.rstrip("/") == DEFAULT_OLLAMA_HOST.rstrip("/")
+        assert model == "qwen2.5:3b"
+        return True
+
+    with patch("dockai.llm.resolve_host._model_available", side_effect=model_ok):
+        updated, resolved = settings_with_resolved_ollama(settings, probe=probe)
+    assert resolved.used_fallback is True
+    assert updated.ollama_model == "qwen2.5:3b"
+
+
 def test_settings_with_resolved_ollama_updates_host():
     settings = _settings("http://203.0.113.99:11434")
 
@@ -122,8 +150,8 @@ def test_run_ask_uses_fallback_provider():
     with (
         patch(
             "dockai.cli.settings_with_resolved_ollama",
-            side_effect=lambda s, probe=None: settings_with_resolved_ollama(
-                s, probe=probe
+            side_effect=lambda s, probe=None, on_progress=None: settings_with_resolved_ollama(
+                s, probe=probe, on_progress=on_progress
             ),
         ),
         patch(

@@ -107,6 +107,35 @@ def test_troubleshoot_includes_status_validation_before_logs(mock_client):
     container.logs.assert_called()
 
 
+def test_run_agent_diagnose_restart_shortcut_skips_llm():
+    container = make_container(
+        name="pg_tileserv",
+        restart_count=0,
+        restarting=False,
+        logs=b"FATAL: connection refused\n",
+    )
+    client = MagicMock()
+    client.containers.list.return_value = [container]
+    llm = ScriptedLLM(
+        [
+            ChatMessage(
+                role="assistant",
+                content="LLM should not run.",
+            ),
+        ]
+    )
+    result = run_agent(
+        "why is my pg tileserv restarting",
+        llm=llm,
+        client=client,
+    )
+    assert len(llm.calls) == 0
+    assert any(
+        t["tool"] == "troubleshoot_container_logs" for t in result.tool_results
+    )
+    assert "does not show an active restart loop" in result.answer
+
+
 def test_run_agent_premise_mismatch_skips_llm_summary():
     container = make_container(
         name="timescaledb",
@@ -145,7 +174,7 @@ def test_run_agent_premise_mismatch_skips_llm_summary():
     )
     assert "does not show an active restart loop" in result.answer
     assert "Log scan" in result.answer
-    assert len(llm.calls) == 1
+    assert len(llm.calls) == 0
 
 
 def test_run_agent_active_restart_prepends_facts_before_llm():
@@ -183,8 +212,7 @@ def test_run_agent_active_restart_prepends_facts_before_llm():
     )
     assert "Docker inspect for api-server" in result.answer
     assert "restart problem" in result.answer.lower()
-    assert "Hypothesis" in result.answer
-    assert len(llm.calls) == 2
+    assert len(llm.calls) == 0
 
 
 def test_multi_tool_batch_troubleshoot_gets_fact_lead():
