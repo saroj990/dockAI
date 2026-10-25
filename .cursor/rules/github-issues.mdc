@@ -1,0 +1,17 @@
+---
+description: Draft GitHub issues into issues/ with standard sections and test cases
+alwaysApply: false
+---
+
+# GitHub issue drafts
+
+When the user asks for a GitHub issue, ticket, bug report, or feature spec to paste into GitHub:
+
+1. Read [.cursor/issue-template.md](../issue-template.md) and follow it exactly.
+2. Write **one markdown file** under `issues/<slug>.md` (folder is gitignored).
+3. Ground content in the repo: real paths (`src/dockai/...`), commands (`dockai ask`, `dockai chat`), and `tests/test_*.py` names.
+4. Required sections (in order): **What is the issue**, **How to reproduce**, **Acceptance criteria**, **Test cases**.
+5. Title is imperative, outcome-focused, under 80 characters. Put it in `**GitHub title:**` at the top of the draft.
+6. Do not implement code unless the user asks to address the issue.
+
+Also follow the `write-issue` skill in `.cursor/skills/write-issue/SKILL.md` for testing-plan conventions (`make_container`, `mock_client`, one test per criterion where practical).

@@ -151,7 +151,7 @@ def _run_ask(
                 prompt,
                 llm=llm,
                 client=client,
-                on_progress=lambda msg: status.update(f"[cyan]{msg}[/cyan]"),
+                on_progress=status.update,
             )
         _print_agent_result(result)
         print_elapsed(time.perf_counter() - started, result.timings)
@@ -320,7 +320,7 @@ def chat_cmd(
                 ) as status:
                     result = session.ask(
                         text,
-                        on_progress=lambda msg: status.update(f"[cyan]{msg}[/cyan]"),
+                        on_progress=status.update,
                     )
                 _print_agent_result(result, chat=True)
                 print_elapsed(time.perf_counter() - started, result.timings)

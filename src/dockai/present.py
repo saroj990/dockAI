@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from dockai.columns import resolve_columns
+from rich.markdown import Markdown
+
 from dockai.formatting import (
     console,
     print_containers,
@@ -164,5 +166,8 @@ def render_presentation(presentation: dict[str, Any]) -> None:
         return
     if kind == "troubleshoot_logs":
         print_troubleshoot(presentation["data"])
+        return
+    if kind == "help":
+        console.print(Markdown(presentation.get("markdown") or ""))
         return
     console.print(presentation.get("caption", ""))
