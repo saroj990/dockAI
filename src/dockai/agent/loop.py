@@ -26,6 +26,11 @@ from dockai.agent.scope import (
     reconcile_tool_for_list_intent,
 )
 from dockai.agent.shortcuts import match_shortcut, needs_docker_tool
+from dockai.diagnosis_summary import (
+    build_diagnosis_answer,
+    merge_diagnosis_answer,
+    should_finish_diagnosis_without_llm,
+)
 from dockai.errors import ToolCallingUnsupportedError
 from dockai.llm.base import ChatMessage, LLMProvider
 from dockai.present import presentation_from_tool, try_table_first
@@ -163,6 +168,16 @@ def _has_successful_troubleshoot(collected: list[dict[str, Any]]) -> bool:
         and (item.get("result") or {}).get("ok")
         for item in collected
     )
+
+
+def _troubleshoot_data_from_batch(batch: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for item in batch:
+        if item.get("tool") != "troubleshoot_container_logs":
+            continue
+        result = item.get("result") or {}
+        if result.get("ok") and isinstance(result.get("data"), dict):
+            return result["data"]
+    return None
 
 
 def _should_nudge_missing_docker_call(
@@ -412,6 +427,7 @@ def run_agent(
     collected: list[dict[str, Any]] = []
     timings: list[tuple[str, float]] = []
     pending_presentation: dict[str, Any] | None = None
+    pending_diagnosis_prefix: str | None = None
 
     def _finish(
         answer: str,
@@ -530,17 +546,26 @@ def run_agent(
                 progress("Waiting for your confirmation…")
                 return _finish(_format_pending(pending), turn)
 
-            if (
-                len(batch) == 1
-                and batch[0].get("tool") == "troubleshoot_container_logs"
-                and (batch[0].get("result") or {}).get("ok")
-            ):
+            troubleshoot_data = _troubleshoot_data_from_batch(batch)
+            if troubleshoot_data is not None:
                 built = presentation_from_tool(
                     "troubleshoot_container_logs",
-                    batch[0]["result"].get("data"),
+                    troubleshoot_data,
                 )
                 if built is not None:
                     pending_presentation = built
+                diagnosis_text = build_diagnosis_answer(user_text, troubleshoot_data)
+                if should_finish_diagnosis_without_llm(user_text, troubleshoot_data):
+                    progress("Inspect contradicts restart premise — summarizing from Docker…")
+                    messages.append(
+                        ChatMessage(role="assistant", content=diagnosis_text)
+                    )
+                    return _finish(
+                        diagnosis_text,
+                        turn,
+                        presentation=pending_presentation,
+                    )
+                pending_diagnosis_prefix = diagnosis_text
                 progress("Log signals ready — asking the model to summarize…")
                 continue
 
@@ -612,6 +637,9 @@ def run_agent(
                 "I could not produce an answer. "
                 "No tool result was available to summarize."
             )
+        if pending_diagnosis_prefix:
+            answer = merge_diagnosis_answer(pending_diagnosis_prefix, answer)
+            pending_diagnosis_prefix = None
         return _finish(answer, turn)
 
     fallback = _answer_from_last_failure(collected)
