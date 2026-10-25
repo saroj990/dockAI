@@ -14,12 +14,27 @@ class ScriptedLLM:
     def __init__(self, responses: list[ChatMessage]) -> None:
         self.responses = list(responses)
         self.calls: list[list[ChatMessage]] = []
+        self.tool_payloads: list[list] = []
 
     def chat(self, messages, tools):
         self.calls.append(list(messages))
+        self.tool_payloads.append(list(tools))
         if not self.responses:
             return ChatMessage(role="assistant", content="fallback")
         return self.responses.pop(0)
+
+
+def test_casual_greeting_uses_llm_without_tools():
+    client = MagicMock()
+    llm = ScriptedLLM(
+        [ChatMessage(role="assistant", content="Hi! Ask me about your containers.")]
+    )
+    result = run_agent("hello", llm=llm, client=client)
+    assert "containers" in result.answer.lower() or "Hi" in result.answer
+    assert len(llm.calls) == 1
+    assert llm.tool_payloads[0] == []
+    assert len(result.tool_results) == 0
+    client.containers.list.assert_not_called()
 
 
 def test_unknown_tool_does_not_fabricate():

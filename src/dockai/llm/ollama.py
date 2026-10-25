@@ -97,12 +97,13 @@ class OllamaProvider:
         messages: list[ChatMessage],
         tools: list[dict[str, Any]],
     ) -> ChatMessage:
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": [_to_ollama_message(m) for m in messages],
             "stream": False,
-            "tools": tools,
         }
+        if tools:
+            payload["tools"] = tools
         try:
             resp = self._client.post("/api/chat", json=payload)
             resp.raise_for_status()

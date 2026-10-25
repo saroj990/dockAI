@@ -12,6 +12,7 @@ from typing import Any
 import docker
 
 from dockai.columns import validate_user_column_request
+from dockai.agent.casual import CASUAL_SYSTEM_PROMPT, is_casual_chat_turn
 from dockai.agent.help import try_dockai_help_response
 from dockai.agent.policy import check_restricted_request
 from dockai.agent.registry import (
@@ -543,6 +544,19 @@ def run_agent(
             f"I could not complete that request: {result.get('error', 'unknown error')}",
             0,
         )
+
+    if is_casual_chat_turn(user_text, focus_container=focus_container):
+        progress("Replying…")
+        t0 = time.perf_counter()
+        casual_messages = [
+            ChatMessage(role="system", content=CASUAL_SYSTEM_PROMPT),
+            ChatMessage(role="user", content=user_text),
+        ]
+        assistant = llm.chat(casual_messages, [])
+        timings.append(("ollama (chat)", time.perf_counter() - t0))
+        messages.append(assistant)
+        answer = (assistant.content or "").strip() or "Hello! How can I help with Docker?"
+        return _finish(answer, 1)
 
     model_calls = 0
     llm_model, llm_host = _llm_identifiers(llm)
