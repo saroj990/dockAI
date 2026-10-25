@@ -15,11 +15,12 @@ from dockai.config import Settings, config_path_for_write, load_settings
 from dockai.setup_config import SetupConfigError, run_setup_config
 from dockai.diagnostics import configure_diagnostics
 from dockai.docker_client import get_client
-from dockai.errors import AmbiguousContainerError, DockaiError
+from dockai.errors import AmbiguousContainerError, DockaiError, DockerUnavailableError
 from dockai.formatting import (
     busy_status,
     console,
     print_containers,
+    print_docker_not_running,
     print_elapsed,
     print_error,
     print_inspect,
@@ -81,6 +82,14 @@ def _handle(exc: Exception) -> None:
         print_error(str(exc))
         print_containers(exc.matches, title="Matches")
         raise typer.Exit(code=2) from exc
+    if isinstance(exc, DockerUnavailableError):
+        if exc.kind == "connection_refused":
+            print_docker_not_running()
+        elif exc.kind == "permission_denied":
+            print_docker_not_running(permission_hint=True)
+        else:
+            print_error(str(exc))
+        raise typer.Exit(code=1) from exc
     if isinstance(exc, DockaiError):
         print_error(str(exc))
         raise typer.Exit(code=1) from exc
@@ -336,7 +345,11 @@ def chat_cmd(
         return
     llm = OllamaProvider(settings=cfg, model=model)
     try:
-        client = get_client(settings=cfg)
+        try:
+            client = get_client(settings=cfg)
+        except DockerUnavailableError as exc:
+            _handle(exc)
+            return
         session = ChatSession(llm=llm, client=client)
         console.print(
             "[bold]dockai chat[/bold] — follow-ups stay in this session. "
