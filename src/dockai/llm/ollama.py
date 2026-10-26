@@ -21,16 +21,33 @@ class OllamaNotFoundError(DockaiError):
     """Ollama HTTP API is not reachable at the given host."""
 
 
+def preflight_http_timeout(total_seconds: float) -> httpx.Timeout:
+    """
+    Timeouts for GET /api/tags during health preflight.
+
+    Short connect so unreachable remote hosts fail fast; read uses the rest of
+    the budget (whole preflight is capped at 5s in settings).
+    """
+    total = max(1.0, min(5.0, float(total_seconds)))
+    connect = min(2.0, total * 0.45)
+    read = max(1.0, total - connect)
+    return httpx.Timeout(connect=connect, read=read, write=read, pool=connect)
+
+
 def list_ollama_models(
     host: str,
     *,
     client: httpx.Client | None = None,
     timeout: float = 15.0,
+    preflight: bool = False,
 ) -> list[str]:
     """Return model names from GET /api/tags (sorted)."""
     base = host.rstrip("/")
     owns = client is None
-    http = client or httpx.Client(base_url=base, timeout=timeout)
+    resolved_timeout: httpx.Timeout | float = (
+        preflight_http_timeout(timeout) if preflight else timeout
+    )
+    http = client or httpx.Client(base_url=base, timeout=resolved_timeout)
     try:
         resp = http.get("/api/tags")
         resp.raise_for_status()
@@ -80,12 +97,13 @@ class OllamaProvider:
         messages: list[ChatMessage],
         tools: list[dict[str, Any]],
     ) -> ChatMessage:
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": [_to_ollama_message(m) for m in messages],
             "stream": False,
-            "tools": tools,
         }
+        if tools:
+            payload["tools"] = tools
         try:
             resp = self._client.post("/api/chat", json=payload)
             resp.raise_for_status()

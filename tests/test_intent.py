@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 from unittest.mock import MagicMock
 
-from dockai.agent.intent import normalize_intent_text, resolve_intent
+from dockai.agent.intent import (
+    normalize_diagnose_text,
+    normalize_intent_text,
+    resolve_intent,
+)
 from dockai.agent.loop import run_agent
 from dockai.agent.shortcuts import match_shortcut
 from dockai.llm.base import ChatMessage
@@ -78,6 +82,64 @@ def test_intent_logs_phrases(phrase: str, tool: str, target: str, tail: int | No
 
 
 @pytest.mark.parametrize(
+    "phrase,target",
+    [
+        ("why is my pg tileserv restarting", "pg tileserv"),
+        ("why is pg_tileserv restarting", "pg_tileserv"),
+        ("why does my api-server keep crashing", "api-server"),
+        ("is my pg tileserv restarting", "pg tileserv"),
+        ("is pg_tileserv restarting", "pg_tileserv"),
+        (
+            "hey can you tell me if my docker container pg tileserv "
+            "is still restarting right now please?",
+            "pg tileserv",
+        ),
+        (
+            "I'm wondering whether pg_tileserv keeps crashing again",
+            "pg_tileserv",
+        ),
+        (
+            "quick question: is the pg tileserv container restarting",
+            "pg tileserv",
+        ),
+        ("my pg tileserv is restarting", "pg tileserv"),
+    ],
+)
+def test_intent_diagnose_restart_phrases(phrase: str, target: str):
+    m = resolve_intent(phrase)
+    assert m.tool == "troubleshoot_container_logs"
+    assert m.confidence >= 0.8
+    assert m.arguments["target"] == target
+    assert match_shortcut(phrase) is not None
+
+
+def test_intent_diagnose_restart_focused():
+    m = resolve_intent("why is it restarting", focus_container="pg_tileserv")
+    assert m.tool == "troubleshoot_container_logs"
+    assert m.arguments["target"] == "pg_tileserv"
+    m2 = resolve_intent("is it restarting", focus_container="pg_tileserv")
+    assert m2.arguments["target"] == "pg_tileserv"
+
+
+def test_normalize_diagnose_text_strips_vernacular():
+    assert normalize_diagnose_text(
+        "Hey, can you please tell me if my docker container pg tileserv "
+        "is still restarting right now?"
+    ) == "is pg tileserv restarting"
+
+
+def test_reconcile_troubleshoot_placeholder_target():
+    from dockai.agent.intent import reconcile_troubleshoot_target
+
+    args = reconcile_troubleshoot_target(
+        "is my pg tileserv restarting",
+        "troubleshoot_container_logs",
+        {"target": "<container-name-or-id>"},
+    )
+    assert args["target"] == "pg tileserv"
+
+
+@pytest.mark.parametrize(
     "phrase,tool",
     [
         ("show me running containers", "list_containers"),
@@ -105,7 +167,6 @@ def test_intent_other_actions(phrase: str, tool: str):
 @pytest.mark.parametrize(
     "phrase",
     [
-        "why is pg_tileserv restarting?",
         "what could be wrong with postgis?",
         "why are the logs for pg_tileserv failing?",
         "help me understand these logs",

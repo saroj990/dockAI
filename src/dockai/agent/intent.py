@@ -11,6 +11,7 @@ from dockai.agent.scope import (
     detect_status_filter,
     normalize_user_text,
 )
+from dockai.agent.target_match import refine_target_with_focus
 from dockai.columns import parse_columns_from_text
 
 # Diagnosis / explanation — always fall through to the LLM.
@@ -44,6 +45,36 @@ _SOFT_VERB = re.compile(
     re.IGNORECASE,
 )
 _TRAILING_PLEASE = re.compile(r"\s+please\.?$", re.IGNORECASE)
+# Extra wrappers common on diagnosis / status asks (applied before pattern match).
+_DIAGNOSE_LEAD_IN = re.compile(
+    r"^(?:"
+    r"(?:hey|hi|hello|so|well|ok(?:ay)?)[,\s]+|"
+    r"(?:quick\s+question|real\s+quick)[,\s:]+|"
+    r"(?:i'?m\s+|i\s+am\s+)?wondering\s+(?:if|whether)\s+|"
+    r"(?:do\s+you\s+know|can\s+you\s+tell\s+me|let\s+me\s+know)\s+(?:if|whether)\s+|"
+    r"(?:can\s+you\s+(?:please\s+)?)?(?:check|verify|confirm)\s+(?:if|whether)\s+|"
+    r"help\s+me\s+(?:figure\s+out|understand|see)\s+(?:if|whether\s+)?|"
+    r"(?:tell\s+me|find\s+out)\s+(?:if|whether)\s+"
+    r")+",
+    re.IGNORECASE,
+)
+# Safe whole-word removal (repeat until stable); avoids container name tokens.
+_INTENT_FILLER_WORD = re.compile(
+    r"\b("
+    r"please|thanks|thank\s+you|"
+    r"just|actually|really|literally|maybe|probably|"
+    r"currently|still|right\s+now|already|again|today|"
+    r"constantly|always|"
+    r"hey|so|well|ok(?:ay)?|"
+    r"quickly"
+    r")\b",
+    re.IGNORECASE,
+)
+# "container/service" wrapper around a name (diagnose targets only).
+_CONTAINER_WRAPPER = re.compile(
+    r"\b(?:docker\s+)?(?:container|service|pod)s?\b",
+    re.IGNORECASE,
+)
 
 _CONFIDENCE_RUN = 0.8
 
@@ -99,6 +130,54 @@ _UPTIME = re.compile(
     re.IGNORECASE,
 )
 
+# Matched on normalize_diagnose_text output (canonical short form).
+_DIAG_RESTART_NAMED = re.compile(
+    r"^(?:(?:why|how\s+come)\s+(?:is|are|does|do)|is|are)\s+"
+    r"(?:(?:my|the|our|this|that)\s+)?"
+    r"(.+?)\s+"
+    r"(?:(?:keep(?:s|ing)?|constantly|always)\s+)?"
+    r"(?:restart(?:ing|s|ed)?|crash(?:ing|es|ed)?)$",
+    re.IGNORECASE,
+)
+_DIAG_RESTART_IT = re.compile(
+    r"^(?:(?:why|how\s+come)\s+(?:is|are|does|do)|is|are)\s+"
+    r"(?:it|this)\s+"
+    r"(?:(?:keep(?:s|ing)?|constantly|always)\s+)?"
+    r"(?:restart(?:ing|s|ed)?|crash(?:ing|es|ed)?)$",
+    re.IGNORECASE,
+)
+# After fluff strip: "my pg tileserv is restarting" → "is pg tileserv restarting"
+_SUBJECT_IS_RESTART = re.compile(
+    r"^(?:(?:my|the|our|this|that)\s+)?(.+?)\s+(?:is|are)\s+"
+    r"(?:(?:keep(?:s|ing)?|constantly|always)\s+)?"
+    r"(restart(?:ing|s|ed)?|crash(?:ing|es|ed)?)$",
+    re.IGNORECASE,
+)
+_SUBJECT_KEEPS_RESTART = re.compile(
+    r"^(?:(?:my|the|our|this|that)\s+)?(.+?)\s+keep(?:s|ing)\s+"
+    r"(restart(?:ing|s|ed)?|crash(?:ing|es|ed)?)$",
+    re.IGNORECASE,
+)
+_DIAG_ISSUES_NAMED = re.compile(
+    r"^(?:(?:why|how\s+come)\s+)?(?:(?:is|are)\s+)?"
+    r"(?:(?:my|the|our|this|that)\s+)?(.+?)\s+"
+    r"(?:showing|having|getting|seeing|see|with)\s+"
+    r"(?:some\s+)?(?:issue|issues|problem|problems|error|errors|trouble)$",
+    re.IGNORECASE,
+)
+_DIAG_ISSUES_IT = re.compile(
+    r"^(?:(?:why|how\s+come)\s+)?(?:(?:is|are)\s+)?(?:it|this)\s+"
+    r"(?:showing|having|getting|seeing|see|with)\s+"
+    r"(?:some\s+)?(?:issue|issues|problem|problems|error|errors|trouble)$",
+    re.IGNORECASE,
+)
+_SUBJECT_HAS_ISSUES = re.compile(
+    r"^(?:(?:my|the|our|this|that)\s+)?(.+?)\s+(?:is|are)\s+"
+    r"(?:showing|having|getting|seeing)\s+(?:some\s+)?"
+    r"(?:issue|issues|problem|problems|error|errors|trouble)$",
+    re.IGNORECASE,
+)
+
 _LIST = re.compile(
     r"^(?:show|list|get|pull|display|can\s+you)?\s*"
     r"(?:the\s+)?"
@@ -123,29 +202,67 @@ class IntentMatch:
     label: str
 
 
+def _strip_intent_fluff(text: str, *, include_diagnose_leads: bool) -> str:
+    """Remove politeness, hedges, and wrappers; collapse whitespace."""
+    if not text:
+        return ""
+    text = text.rstrip("?.!").strip()
+    for _ in range(8):
+        prev = text
+        text = _LEAD_IN.sub("", text).strip()
+        if include_diagnose_leads:
+            text = _DIAGNOSE_LEAD_IN.sub("", text).strip()
+        text = _SOFT_VERB.sub("", text).strip()
+        nxt2 = re.sub(r"^the\s+", "", text, count=1, flags=re.IGNORECASE).strip()
+        if nxt2 != text and re.match(
+            r"^(logs?|containers?|uptime|inspect|details|info|start|stop|restart|"
+            r"why|is|are|how)\b",
+            nxt2,
+            re.IGNORECASE,
+        ):
+            text = nxt2
+        if text == prev:
+            break
+    for _ in range(4):
+        prev = text
+        text = _INTENT_FILLER_WORD.sub(" ", text)
+        text = " ".join(text.split())
+        if text == prev:
+            break
+    text = _TRAILING_PLEASE.sub("", text).strip()
+    return text
+
+
+def normalize_diagnose_text(user_text: str) -> str:
+    """Canonical form for restart/crash diagnosis intent matching."""
+    base = normalize_user_text(user_text)
+    text = _strip_intent_fluff(base, include_diagnose_leads=True)
+    text = _CONTAINER_WRAPPER.sub(" ", text)
+    text = " ".join(text.split())
+    flipped = _SUBJECT_IS_RESTART.fullmatch(text)
+    if flipped:
+        target = _clean_target(flipped.group(1))
+        verb = flipped.group(2).lower()
+        text = f"is {target} {verb}"
+    else:
+        keeps = _SUBJECT_KEEPS_RESTART.fullmatch(text)
+        if keeps:
+            target = _clean_target(keeps.group(1))
+            verb = keeps.group(2).lower()
+            text = f"is {target} {verb}"
+    issues = _SUBJECT_HAS_ISSUES.fullmatch(text)
+    if issues:
+        target = _clean_target(issues.group(1))
+        text = f"why {target} showing issues"
+    return text.strip()
+
+
 def normalize_intent_text(user_text: str) -> str:
     """Collapse fluff shared by all intents; keep original for scope helpers."""
     text = normalize_user_text(user_text)
     if not text:
         return ""
-    # Strip lead-ins / soft verbs until stable ("can we see the logs" → "logs …").
-    for _ in range(4):
-        nxt = _LEAD_IN.sub("", text).strip()
-        nxt = _SOFT_VERB.sub("", nxt).strip()
-        # Drop a lone leading "the " left after verb strip ("the logs for …").
-        nxt2 = re.sub(r"^the\s+", "", nxt, count=1, flags=re.IGNORECASE).strip()
-        # Only drop "the" when what remains still looks like an ask (logs/list/…).
-        if nxt2 != nxt and re.match(
-            r"^(logs?|containers?|uptime|inspect|details|info|start|stop|restart)\b",
-            nxt2,
-            re.IGNORECASE,
-        ):
-            nxt = nxt2
-        if nxt == text:
-            break
-        text = nxt
-    text = _TRAILING_PLEASE.sub("", text).strip()
-    return text
+    return _strip_intent_fluff(text, include_diagnose_leads=False)
 
 
 def resolve_intent(
@@ -161,6 +278,12 @@ def resolve_intent(
     original = normalize_user_text(user_text)
     if not original:
         return _unknown()
+
+    diagnose = _try_diagnose_restart_intent(
+        user_text, focus_container=focus_container
+    )
+    if diagnose is not None:
+        return diagnose
 
     if _NEEDS_LLM.search(original):
         return IntentMatch(
@@ -196,6 +319,7 @@ def resolve_intent(
     if mut:
         action, target = mut.group(1).lower(), _clean_target(mut.group(2))
         if target and not _looks_like_question(target):
+            target = refine_target_with_focus(target, focus_container)
             return IntentMatch(
                 intent=action,
                 tool=f"{action}_container",
@@ -204,7 +328,7 @@ def resolve_intent(
                 label=f"intent:{action}",
             )
 
-    logs = _match_logs(lower)
+    logs = _match_logs(lower, focus_container=focus_container)
     if logs is not None:
         return logs
 
@@ -277,12 +401,17 @@ def resolve_intent(
     return _unknown()
 
 
-def _match_logs(lower: str) -> IntentMatch | None:
+def _match_logs(
+    lower: str,
+    *,
+    focus_container: str | None = None,
+) -> IntentMatch | None:
     # Prefer "logs for <target>" so "logs for pg tileserv" is not parsed as
     # target="logs for pg" via the "<target> logs" shape.
     match = _LOGS_FOR_TARGET.fullmatch(lower)
     if match:
         target = _clean_target(match.group(1))
+        target = refine_target_with_focus(target, focus_container)
         if target and not _looks_like_question(target) and not _bad_log_target(target):
             args: dict[str, Any] = {"target": target}
             if match.group(2):
@@ -298,7 +427,9 @@ def _match_logs(lower: str) -> IntentMatch | None:
     match = _LOGS_OF_TARGET.fullmatch(lower)
     if match:
         tail_a, target, tail_b = match.group(1), match.group(2), match.group(3)
-        target = _clean_target(target)
+        target = refine_target_with_focus(
+            _clean_target(target), focus_container
+        )
         if target and not _looks_like_question(target) and not _bad_log_target(target):
             args = {"target": target}
             tail = tail_a or tail_b
@@ -312,6 +443,116 @@ def _match_logs(lower: str) -> IntentMatch | None:
                 label="intent:logs",
             )
     return None
+
+
+def _validate_diagnose_target(raw: str) -> str | None:
+    target = _clean_target(raw)
+    if not target or _bad_log_target(target) or _looks_like_question(target):
+        return None
+    if re.match(r"^(?:containers?|services?|pods?)$", target, re.IGNORECASE):
+        return None
+    return target
+
+
+def extract_diagnose_container_target(
+    text: str,
+    *,
+    focus_container: str | None = None,
+) -> str | None:
+    """Container name from restart/crash or issues phrasing (after normalization)."""
+    canonical = normalize_diagnose_text(text)
+    if not canonical:
+        return None
+    if focus_container and (
+        _DIAG_RESTART_IT.fullmatch(canonical)
+        or _DIAG_ISSUES_IT.fullmatch(canonical)
+    ):
+        return focus_container
+
+    for pattern in (_DIAG_RESTART_NAMED, _DIAG_ISSUES_NAMED):
+        match = pattern.fullmatch(canonical)
+        if not match:
+            continue
+        target = _validate_diagnose_target(match.group(1))
+        if target is None:
+            continue
+        return refine_target_with_focus(target, focus_container)
+    return None
+
+
+def extract_named_restart_target(
+    text: str,
+    *,
+    focus_container: str | None = None,
+) -> str | None:
+    """Backward-compatible alias for diagnose container extraction."""
+    return extract_diagnose_container_target(
+        text, focus_container=focus_container
+    )
+
+
+def is_placeholder_tool_target(target: str) -> bool:
+    """True when the model passed a schema placeholder instead of a real name."""
+    text = (target or "").strip()
+    if not text:
+        return True
+    if "<" in text or ">" in text:
+        return True
+    lower = text.lower()
+    if "container-name" in lower or lower in {
+        "container",
+        "name",
+        "target",
+        "container_name",
+        "container-name-or-id",
+    }:
+        return True
+    return False
+
+
+def reconcile_troubleshoot_target(
+    user_text: str,
+    tool_name: str,
+    arguments: dict[str, Any] | None,
+    *,
+    focus_container: str | None = None,
+) -> dict[str, Any]:
+    """Replace placeholder troubleshoot targets with names from the user message."""
+    args = dict(arguments or {})
+    if tool_name != "troubleshoot_container_logs":
+        return args
+    target = str(args.get("target") or "").strip()
+    if not is_placeholder_tool_target(target):
+        return args
+    extracted = extract_diagnose_container_target(
+        user_text,
+        focus_container=focus_container,
+    )
+    if extracted:
+        args["target"] = refine_target_with_focus(extracted, focus_container)
+    elif focus_container and is_placeholder_tool_target(target):
+        args["target"] = focus_container
+    return args
+
+
+def _try_diagnose_restart_intent(
+    user_text: str,
+    *,
+    focus_container: str | None,
+) -> IntentMatch | None:
+    """Named restart/crash asks → troubleshoot_container_logs (skip LLM routing)."""
+    target = extract_diagnose_container_target(
+        user_text, focus_container=focus_container
+    )
+    if target is None:
+        return None
+    return IntentMatch(
+        intent="diagnose",
+        tool="troubleshoot_container_logs",
+        arguments={"target": target},
+        confidence=0.9,
+        label="intent:diagnose",
+    )
 
 
 def _bad_log_target(target: str) -> bool:
@@ -344,9 +585,21 @@ def _is_column_list_request(lower: str) -> bool:
 def _clean_target(raw: str) -> str:
     text = raw.strip(" .")
     text = re.sub(r"^(container\s+)?(named\s+|called\s+)?", "", text, flags=re.I)
-    # Strip trailing fluff: "pg_tileserv containers", "api-server please"
+    text = re.sub(
+        r"^(?:(?:the|my|our|this|that)\s+)+",
+        "",
+        text,
+        flags=re.I,
+    )
+    text = _CONTAINER_WRAPPER.sub(" ", text)
+    text = re.sub(
+        r"\s+(?:right\s+now|anymore|again|today|currently|still|please)$",
+        "",
+        text,
+        flags=re.I,
+    )
     text = re.sub(r"\s+(containers?|please)$", "", text, flags=re.I)
-    return text.strip(" .")
+    return " ".join(text.split()).strip(" .")
 
 
 def _looks_like_question(text: str) -> bool:

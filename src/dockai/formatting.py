@@ -23,6 +23,20 @@ def print_error(message: str) -> None:
     console.print(f"[bold red]Error:[/bold red] {message}")
 
 
+def print_docker_not_running(*, permission_hint: bool = False) -> None:
+    """Clear message when the Docker socket/daemon is unreachable."""
+    console.print("[bold red]Docker is not running.[/bold red]")
+    if permission_hint:
+        console.print(
+            "[bold red]Error:[/bold red] "
+            "Could not connect to Docker — check permissions (docker group / socket access)."
+        )
+    else:
+        console.print(
+            "[dim]Start Docker Desktop or the Docker daemon, then try again.[/dim]"
+        )
+
+
 def print_info(message: str) -> None:
     console.print(message)
 

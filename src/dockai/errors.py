@@ -8,6 +8,10 @@ class DockaiError(Exception):
 class DockerUnavailableError(DockaiError):
     """Docker Engine is not reachable or permission was denied."""
 
+    def __init__(self, message: str, *, kind: str = "unavailable") -> None:
+        super().__init__(message)
+        self.kind = kind
+
 
 class ContainerNotFoundError(DockaiError):
     """No container matched the requested name or ID."""
