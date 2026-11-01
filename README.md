@@ -148,6 +148,7 @@ dockai config
 | Ollama timeout | `[ollama] timeout` | `DOCKAI_OLLAMA_TIMEOUT` | — |
 | Docker timeout | `[docker] timeout` | `DOCKAI_DOCKER_TIMEOUT` | — |
 | Verbose logs | `[diagnostics] verbose` | `DOCKAI_DEBUG=1` | `-v` / `--verbose` |
+| Chat welcome hints | `[diagnostics] chat_hints` | `DOCKAI_CHAT_HINTS=0` | — |
 | Config path | — | `DOCKAI_CONFIG=/path/to.toml` | `--config` |
 
 Env vars are **optional** if `dockai.toml` is set. Use them only to override without editing the file.
@@ -222,6 +223,10 @@ dockai ask --model qwen2.5:3b "list uptime"
 ```bash
 dockai chat
 ```
+
+On start, `dockai chat` prints a short dim hint block (example phrases + how to list commands). Turn it off with `[diagnostics] chat_hints = false` or `DOCKAI_CHAT_HINTS=0`.
+
+![dockai chat welcome hints](docs/images/chat-welcome-hints.png)
 
 Follow-ups stay in one session (focused container, pending confirmations). Type `exit` to quit.
 
