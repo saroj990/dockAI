@@ -13,7 +13,9 @@ Use **dockai** for Docker on your machine. These are **dockai** commands — not
 | `dockai search <keyword>` | Search container names |
 | `dockai start \| stop \| restart <name>` | Lifecycle (asks you to confirm) |
 | `dockai config` | Show Ollama/Docker settings |
+| `dockai doctor` | Check Docker + Ollama readiness (fix hints on failure) |
 | `dockai setup config` | Interactive Ollama host + model setup |
+| `dockai setup doctor` | Same as `dockai doctor` |
 | `dockai ask "<question>"` | One-shot natural language |
 | `dockai chat` | Interactive session with follow-ups |
 

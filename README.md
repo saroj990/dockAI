@@ -171,6 +171,9 @@ Other workable options: `llama3.1:8b` (higher quality, slower), `gemma3:4b` (fas
 # 1) Docker-only (fastest — no Ollama)
 dockai containers
 
+# 1b) Full stack readiness (Docker + Ollama + model)
+dockai doctor
+
 # 2) NL shortcut (no Ollama; look for shortcut:list in timings)
 dockai "show running containers"
 

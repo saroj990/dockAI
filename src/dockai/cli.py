@@ -14,6 +14,7 @@ from dockai.agent import ChatSession, run_agent
 from dockai.config import Settings, config_path_for_write, load_settings
 from dockai.setup_config import SetupConfigError, run_setup_config
 from dockai.diagnostics import configure_diagnostics
+from dockai.doctor import run_doctor
 from dockai.docker_client import get_client
 from dockai.errors import AmbiguousContainerError, DockaiError, DockerUnavailableError
 from dockai.formatting import (
@@ -53,6 +54,7 @@ _SUBCOMMANDS = frozenset(
         "chat",
         "config",
         "containers",
+        "doctor",
         "inspect",
         "logs",
         "search",
@@ -284,6 +286,34 @@ def config_cmd(ctx: typer.Context) -> None:
     console.print(f"[bold]docker.timeout:[/bold] {settings.docker_timeout}")
     console.print(f"[bold]diagnostics.verbose:[/bold] {settings.verbose}")
     console.print(f"[bold]diagnostics.chat_hints:[/bold] {settings.chat_hints}")
+
+
+@app.command("doctor")
+def doctor_cmd(
+    ctx: typer.Context,
+    require_ollama: bool = typer.Option(
+        True,
+        "--require-ollama/--no-require-ollama",
+        help="Check Ollama reachability and the configured model (default: on).",
+    ),
+) -> None:
+    """Check Docker and Ollama readiness before ask/chat."""
+    settings = _ctx_settings(ctx)
+    code = run_doctor(settings, require_ollama=require_ollama)
+    raise typer.Exit(code=code)
+
+
+@setup_app.command("doctor")
+def setup_doctor_cmd(
+    ctx: typer.Context,
+    require_ollama: bool = typer.Option(
+        True,
+        "--require-ollama/--no-require-ollama",
+        help="Check Ollama reachability and the configured model (default: on).",
+    ),
+) -> None:
+    """Same as `dockai doctor` (readiness checks)."""
+    doctor_cmd(ctx, require_ollama=require_ollama)
 
 
 @setup_app.command("config")
