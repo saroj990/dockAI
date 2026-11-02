@@ -19,6 +19,7 @@ from dockai.errors import AmbiguousContainerError, DockaiError, DockerUnavailabl
 from dockai.formatting import (
     busy_status,
     console,
+    print_chat_welcome_hints,
     print_containers,
     print_docker_not_running,
     print_elapsed,
@@ -282,6 +283,7 @@ def config_cmd(ctx: typer.Context) -> None:
     console.print(f"[bold]ollama.fallback_model:[/bold] {fb_model}")
     console.print(f"[bold]docker.timeout:[/bold] {settings.docker_timeout}")
     console.print(f"[bold]diagnostics.verbose:[/bold] {settings.verbose}")
+    console.print(f"[bold]diagnostics.chat_hints:[/bold] {settings.chat_hints}")
 
 
 @setup_app.command("config")
@@ -355,6 +357,8 @@ def chat_cmd(
             "[bold]dockai chat[/bold] — follow-ups stay in this session. "
             "Type [cyan]exit[/cyan] to quit."
         )
+        if settings.chat_hints:
+            print_chat_welcome_hints()
         while True:
             try:
                 line = typer.prompt("You")

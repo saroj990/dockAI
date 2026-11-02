@@ -1,12 +1,69 @@
 # dockai
 
-Natural-language Docker CLI agent. Talk to your local Docker Engine in plain English, or use fast direct commands (no LLM).
+Talk to your Docker Engine in plain English — or use fast direct commands with no model at all.
 
-## Fresh machine setup (clone → first command)
+**Your daemon. Your model. No account, no usage limits, no Docker Desktop.**
 
-Follow these steps **in order** on a new Mac/Linux machine.
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](#1-prerequisites)
+[![Docker Engine](https://img.shields.io/badge/Docker-Engine-2496ED?logo=docker&logoColor=white)](#1-prerequisites)
+[![LLM](https://img.shields.io/badge/LLM-Ollama%20(local)-black)](#1-prerequisites)
+[![No account](https://img.shields.io/badge/account-not%20required-brightgreen)](#why-dockai)
 
-### 0. Prerequisites (install once)
+## Why dockai
+
+- **Runs fully offline.** Inference stays on your machine (Ollama) or your own GPU box. Pull a model once, then work air-gapped.
+- **No account, no plan, no usage meter.** Nothing phones home to run a query.
+- **No Docker Desktop.** It talks to the Docker Engine API, so plain Docker Engine on Linux, Colima, or Desktop all work.
+- **Fast path first.** Common asks ("show running containers", "logs for api-server") are resolved by a local intent pipeline in ~100–300 ms — the model never runs.
+- **Never executes model output.** Only a fixed set of Docker tools is callable; `start` / `stop` / `restart` / `exec` are proposed and confirmed, and delete/prune are refused.
+- **Reads real Docker state.** Tables, uptimes, and diagnosis come from inspect + logs, not from the model's imagination.
+
+## How it compares to Docker AI (Gordon)
+
+Docker's built-in agent is a good product. It is also a signed-in, plan-metered, Desktop-first, service-backed one. dockai is the opposite trade-off:
+
+| | **dockai** | **Docker AI (Gordon)** |
+|---|---|---|
+| Where inference runs | Your machine — local Ollama, or a remote GPU host you own | Docker's AI service |
+| Works offline / air-gapped | Yes, after the model is pulled | No |
+| Account and plan | None | Docker account; usage limits |
+| Docker Desktop required | No — any reachable Docker Engine | Desktop 4.74+ (`docker ai` for the CLI) |
+| Deterministic no-LLM path | Yes — `shortcut:list`, `shortcut:logs`, … | Model decides every turn |
+| Model choice | `qwen2.5:3b`, `llama3.1:8b`, anything tool-capable | Docker-selected |
+| Cost | Free; compute is yours | Plan-based |
+| Model output → shell | Never; fixed tool registry | Docker commands, run after approval |
+| Destructive operations | delete / prune refused outright | Broader action surface |
+| Scriptable | Direct CLI and one-shot prompts | Interactive TUI / Desktop |
+
+**Where Gordon is ahead:** images, volumes, networks, Dockerfile review/authoring, and docs search. dockai is deliberately narrow — containers, logs, uptime, and diagnosis — because that is the part a local model can be trusted with.
+
+*Comparison reflects public Docker docs as of October 2026. Docker AI moves fast; check [docs.docker.com/ai/gordon](https://docs.docker.com/ai/gordon/) for the current feature set.*
+
+## 60-second demo
+
+```console
+$ dockai "show running containers"        # 132 ms — local intent, no model call
+$ dockai "show its last 25 log lines"     # session focus carries the container
+$ dockai "why is api-server restarting?"  # inspect + log scan first, facts before guesses
+$ dockai stop api-server                  # shows impact, then asks to confirm
+```
+
+Stage timings always tell you which path ran:
+
+```text
+# NL shortcut (typically ~100–300 ms)
+Completed in 132 ms
+  · shortcut:list: 108 ms
+
+# LLM path (seconds — the model chose the tool)
+Completed in 9.2s
+  · ollama #1: 9.1s
+  · docker list_containers: 128 ms
+```
+
+## Install (clone → first command)
+
+### 1. Prerequisites
 
 | Need | Why | Check |
 |------|-----|--------|
@@ -15,29 +72,24 @@ Follow these steps **in order** on a new Mac/Linux machine.
 | **Docker Engine** | Container source of truth | `docker ps` (must work **without** sudo for your user) |
 | **Ollama** | Natural-language mode only | `ollama --version` |
 
-- Docker: install [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Mac/Windows) or Docker Engine (Linux). Start it, then confirm `docker ps` works.
+- Docker: install [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Mac/Windows) or Docker Engine (Linux). Start it, then confirm `docker ps` works. Any Engine the Docker SDK can reach is fine.
 - Ollama: install from [https://ollama.com](https://ollama.com), then start it (`ollama serve` if it is not already running).
 - You do **not** need Ollama for `dockai containers`, `logs`, `stop`, etc.
 
-### 1. Clone
+### 2. Clone and install
 
 ```bash
 git clone git@github.com:saroj990/dockAI.git
 cd dockAI
+
+./scripts/setup.sh      # venv + durable install (not fragile editable)
+./scripts/link-cli.sh   # symlink ~/.local/bin/dockai — no activate needed
 ```
 
-HTTPS alternative:
+HTTPS alternative for the clone:
 
 ```bash
 git clone https://github.com/saroj990/dockAI.git
-cd dockAI
-```
-
-### 2. One-time install (then `dockai` works everywhere)
-
-```bash
-./scripts/setup.sh      # venv + durable install (not fragile editable)
-./scripts/link-cli.sh   # symlink ~/.local/bin/dockai — no activate needed
 ```
 
 Open a **new** terminal (or `source ~/.zshrc`), then from any directory:
@@ -47,7 +99,7 @@ dockai chat
 dockai containers
 ```
 
-You should **not** need `source .venv/bin/activate` or `pip install -e` for normal use. The linked launcher auto-repairs a broken install.
+With `link-cli.sh` you should **not** need `source .venv/bin/activate`. The linked launcher auto-repairs a broken install.
 
 If you see `No module named 'dockai'`, you are likely hitting an old `.venv/bin/dockai` on PATH — run `./scripts/link-cli.sh` and prefer `~/.local/bin/dockai`. Avoid `pip install -e` unless you are developing; use `./scripts/setup.sh` to reinstall.
 
@@ -96,11 +148,12 @@ dockai config
 | Ollama timeout | `[ollama] timeout` | `DOCKAI_OLLAMA_TIMEOUT` | — |
 | Docker timeout | `[docker] timeout` | `DOCKAI_DOCKER_TIMEOUT` | — |
 | Verbose logs | `[diagnostics] verbose` | `DOCKAI_DEBUG=1` | `-v` / `--verbose` |
+| Chat welcome hints | `[diagnostics] chat_hints` | `DOCKAI_CHAT_HINTS=0` | — |
 | Config path | — | `DOCKAI_CONFIG=/path/to.toml` | `--config` |
 
 Env vars are **optional** if `dockai.toml` is set. Use them only to override without editing the file.
 
-### 4. Pull the Ollama model (NL mode)
+### 4. Pull the model (NL mode)
 
 The model name in config **must** exist locally:
 
@@ -115,10 +168,6 @@ Other workable options: `llama3.1:8b` (higher quality, slower), `gemma3:4b` (fas
 ### 5. Smoke test
 
 ```bash
-# Always activate first (new terminal)
-cd /path/to/dockAI
-source .venv/bin/activate
-
 # 1) Docker-only (fastest — no Ollama)
 dockai containers
 
@@ -129,24 +178,15 @@ dockai "show running containers"
 dockai chat
 ```
 
-Stage timings tell you which path ran:
-
-```text
-# NL shortcut (typical ~100–300 ms)
-Completed in 132 ms
-  · shortcut:list: 108 ms
-
-# LLM path (seconds — model chose the tool)
-Completed in 9.2s
-  · ollama #1: 9.1s
-  · docker list_containers: 128 ms
-```
+If `dockai` is not on PATH (you skipped `link-cli.sh`), run `source .venv/bin/activate` from the checkout first, or call `./scripts/link-cli.sh`.
 
 ---
 
 ## Features
 
-Activate the venv first (`source .venv/bin/activate`). Below: what dockai can do, with examples.
+**Full catalog:** [docs/FEATURES.md](docs/FEATURES.md) — commands, NL shortcuts, troubleshooting, Ollama/fallback, safety, and performance paths.
+
+Examples below assume `dockai` is on PATH (via `link-cli.sh`). Add `source .venv/bin/activate` if you are running from a checkout without the launcher.
 
 ### Direct CLI (no LLM)
 
@@ -183,6 +223,10 @@ dockai ask --model qwen2.5:3b "list uptime"
 ```bash
 dockai chat
 ```
+
+On start, `dockai chat` prints a short dim hint block (example phrases + how to list commands). Turn it off with `[diagnostics] chat_hints = false` or `DOCKAI_CHAT_HINTS=0`.
+
+![dockai chat welcome hints](docs/images/chat-welcome-hints.png)
 
 Follow-ups stay in one session (focused container, pending confirmations). Type `exit` to quit.
 
@@ -322,32 +366,6 @@ Docker still uses **your local** Docker Engine unless you change the Docker sock
 
 ---
 
-## Common setup mistakes
-
-| Problem | Cause | Fix |
-|---------|--------|-----|
-| `dockai: command not found` | venv not activated, or install skipped | `source .venv/bin/activate` then `./scripts/setup.sh` |
-| `No module named 'dockai'` | Broken editable install or old `.venv` script on PATH | `./scripts/setup.sh && ./scripts/link-cli.sh` then use a new terminal (`which dockai` → `~/.local/bin/dockai`) |
-| `Docker Engine is unavailable` | Docker not running / no socket permission | Start Docker Desktop; re-check `docker ps` |
-| Ollama connection errors | Ollama not running or wrong host | `ollama serve`; set `host` in `dockai.toml` |
-| Model not found / bad tool calls | Config model ≠ pulled model | `ollama list` and match `[ollama] model` exactly |
-| `TOMLDecodeError: Cannot overwrite a value` | Duplicate key (e.g. two `model =` lines) | Keep a single `model` / `host` under `[ollama]` |
-| `python: command not found` / need 3.11+ | Old system Python | `brew install python@3.12` then `./scripts/setup.sh` |
-| Slow answers (10–20s+) | LLM path / large model | Prefer shortcut phrases or `dockai containers`; use `qwen2.5:3b` |
-
----
-
-## Testing (optional)
-
-```bash
-source .venv/bin/activate
-pytest                  # unit + acceptance (mocked Docker)
-pytest -m integration   # disposable alpine container (needs Docker)
-pytest -k typo -q       # fuzzy name-resolution tests
-```
-
----
-
 ## Performance notes
 
 | Path | Typical speed | When |
@@ -372,6 +390,35 @@ pytest -k typo -q       # fuzzy name-resolution tests
 - Facts come from Docker, not model invention.
 - delete / prune / Docker Desktop control → clear **Not supported** refusal.
 - Name typos: close-match only with strict thresholds; ambiguous → ask; IDs never fuzzy-matched to names.
+- Offline by default: with a local Ollama host, no query or container data leaves the machine. Point `[ollama] host` elsewhere only when you mean to.
+
+---
+
+## Common setup mistakes
+
+| Problem | Cause | Fix |
+|---------|--------|-----|
+| `dockai: command not found` | venv not activated, or install skipped | `./scripts/setup.sh` then `./scripts/link-cli.sh`; or `source .venv/bin/activate` |
+| `No module named 'dockai'` | Broken editable install or old `.venv` script on PATH | `./scripts/setup.sh && ./scripts/link-cli.sh` then use a new terminal (`which dockai` → `~/.local/bin/dockai`) |
+| `Docker Engine is unavailable` | Docker not running / no socket permission | Start Docker Desktop; re-check `docker ps` |
+| Ollama connection errors | Ollama not running or wrong host | `ollama serve`; set `host` in `dockai.toml` |
+| Model not found / bad tool calls | Config model ≠ pulled model | `ollama list` and match `[ollama] model` exactly |
+| `TOMLDecodeError: Cannot overwrite a value` | Duplicate key (e.g. two `model =` lines) | Keep a single `model` / `host` under `[ollama]` |
+| `python: command not found` / need 3.11+ | Old system Python | `brew install python@3.12` then `./scripts/setup.sh` |
+| Slow answers (10–20s+) | LLM path / large model | Prefer shortcut phrases or `dockai containers`; use `qwen2.5:3b` |
+
+---
+
+## Testing (optional)
+
+```bash
+source .venv/bin/activate
+pytest                  # unit + acceptance (mocked Docker)
+pytest -m integration   # disposable alpine container (needs Docker)
+pytest -k typo -q       # fuzzy name-resolution tests
+```
+
+**Contributing:** [GITHUB_ISSUES.md](GITHUB_ISSUES.md) lists the backlog. Run the suite above before opening a PR; new NL behavior should include a shortcut/name-resolution test.
 
 ---
 
@@ -385,4 +432,12 @@ pytest -k typo -q       # fuzzy name-resolution tests
 | 4 Safe mutations | Done |
 | 5 Hardening | Done |
 
-Open issues / backlog: see `GITHUB_ISSUES.md`.
+**Next** (planned, not shipped):
+
+- Scriptable output — `--json`, `--dry-run`, `--yes`, meaningful exit codes
+- Compose-aware service focus
+- `dockai mcp` — expose the tool registry to other agents
+- Incident bundle — `dockai triage <name> --save`
+- Policy labels (`dockai.protect=true`) and an audit log
+
+Open issues / backlog: see [GITHUB_ISSUES.md](GITHUB_ISSUES.md).

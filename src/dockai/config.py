@@ -29,6 +29,7 @@ class Settings:
     ollama_fallback_model: str | None = None
     docker_timeout: float = DEFAULT_DOCKER_TIMEOUT
     verbose: bool = False
+    chat_hints: bool = True
     config_path: Path | None = None
 
 
@@ -82,7 +83,11 @@ def _as_bool(value: object, default: bool) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on"}
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
     return default
 
 
@@ -216,6 +221,12 @@ def load_settings(
     else:
         verbose = _as_bool(diagnostics.get("verbose"), False)
 
+    env_chat_hints = os.getenv("DOCKAI_CHAT_HINTS")
+    if env_chat_hints is not None and env_chat_hints.strip() != "":
+        chat_hints = _as_bool(env_chat_hints, True)
+    else:
+        chat_hints = _as_bool(diagnostics.get("chat_hints"), True)
+
     return Settings(
         ollama_host=host,
         ollama_model=resolved_model,
@@ -225,6 +236,7 @@ def load_settings(
         ollama_fallback_model=ollama_fallback_model,
         docker_timeout=docker_timeout,
         verbose=verbose,
+        chat_hints=chat_hints,
         config_path=path,
     )
 

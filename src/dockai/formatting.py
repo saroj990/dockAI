@@ -37,6 +37,18 @@ def print_docker_not_running(*, permission_hint: bool = False) -> None:
         )
 
 
+CHAT_WELCOME_HINT_MARKER = "what commands can I run"
+
+
+def print_chat_welcome_hints() -> None:
+    """Brief examples shown once when `dockai chat` starts (dim, 2 lines)."""
+    console.print(
+        "[dim]Try: “show running containers”, “logs for api-server”, "
+        "“why is it restarting?”[/dim]"
+    )
+    console.print(f"[dim]Ask: {CHAT_WELCOME_HINT_MARKER}?[/dim]")
+
+
 def print_info(message: str) -> None:
     console.print(message)
 
