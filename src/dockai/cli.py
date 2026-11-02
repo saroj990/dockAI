@@ -340,6 +340,10 @@ def setup_config_cmd(ctx: typer.Context) -> None:
             prompt_model_index=prompt_model_index,
         )
         console.print(f"[green]Saved Ollama settings to {written}[/green]")
+        console.print("\n[bold]Next steps:[/bold]")
+        console.print("  1. Run `dockai doctor` to verify Docker and Ollama readiness.")
+        console.print("  2. Run `dockai containers` for a Docker-only smoke test.")
+        console.print("  3. Run `dockai chat` to start the natural-language assistant.")
     except SetupConfigError as exc:
         print_error(str(exc))
         raise typer.Exit(code=1) from exc

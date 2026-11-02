@@ -41,7 +41,8 @@ def run_setup_config(
 
     if not models:
         raise SetupConfigError(
-            f"No models are available on {host}. Pull a model with Ollama first."
+            f"No models are available on {host}. Pull a model with Ollama first "
+            "(for example, `ollama pull qwen2.5:3b`), then run `dockai setup config` again."
         )
 
     index = prompt_model_index(models)
