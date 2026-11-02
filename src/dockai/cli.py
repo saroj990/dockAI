@@ -14,6 +14,7 @@ from dockai.agent import ChatSession, run_agent
 from dockai.config import Settings, config_path_for_write, load_settings
 from dockai.setup_config import SetupConfigError, run_setup_config
 from dockai.diagnostics import configure_diagnostics
+from dockai.doctor import run_doctor
 from dockai.docker_client import get_client
 from dockai.errors import AmbiguousContainerError, DockaiError, DockerUnavailableError
 from dockai.formatting import (
@@ -53,6 +54,7 @@ _SUBCOMMANDS = frozenset(
         "chat",
         "config",
         "containers",
+        "doctor",
         "inspect",
         "logs",
         "search",
@@ -286,6 +288,34 @@ def config_cmd(ctx: typer.Context) -> None:
     console.print(f"[bold]diagnostics.chat_hints:[/bold] {settings.chat_hints}")
 
 
+@app.command("doctor")
+def doctor_cmd(
+    ctx: typer.Context,
+    require_ollama: bool = typer.Option(
+        True,
+        "--require-ollama/--no-require-ollama",
+        help="Check Ollama reachability and the configured model (default: on).",
+    ),
+) -> None:
+    """Check Docker and Ollama readiness before ask/chat."""
+    settings = _ctx_settings(ctx)
+    code = run_doctor(settings, require_ollama=require_ollama)
+    raise typer.Exit(code=code)
+
+
+@setup_app.command("doctor")
+def setup_doctor_cmd(
+    ctx: typer.Context,
+    require_ollama: bool = typer.Option(
+        True,
+        "--require-ollama/--no-require-ollama",
+        help="Check Ollama reachability and the configured model (default: on).",
+    ),
+) -> None:
+    """Same as `dockai doctor` (readiness checks)."""
+    doctor_cmd(ctx, require_ollama=require_ollama)
+
+
 @setup_app.command("config")
 def setup_config_cmd(ctx: typer.Context) -> None:
     """Prompt for Ollama URL and model, then save to dockai.toml."""
@@ -310,6 +340,10 @@ def setup_config_cmd(ctx: typer.Context) -> None:
             prompt_model_index=prompt_model_index,
         )
         console.print(f"[green]Saved Ollama settings to {written}[/green]")
+        console.print("\n[bold]Next steps:[/bold]")
+        console.print("  1. Run `dockai doctor` to verify Docker and Ollama readiness.")
+        console.print("  2. Run `dockai containers` for a Docker-only smoke test.")
+        console.print("  3. Run `dockai chat` to start the natural-language assistant.")
     except SetupConfigError as exc:
         print_error(str(exc))
         raise typer.Exit(code=1) from exc

@@ -13,7 +13,7 @@ When the user asks for an issue, reply with the issue only. Do not change code u
 
 When they ask to address, implement, or fix an issue, use the issue already in the conversation. If none exists, draft it first, then implement it in the same turn.
 
-Follow [.cursor/rules/github-issues.mdc](../../rules/github-issues.mdc) and [.cursor/issue-template.md](../../issue-template.md). Save drafts under `issues/<slug>.md` (gitignored).
+Follow [.cursor/rules/github-issues.mdc](../../rules/github-issues.mdc) and [.cursor/issue-template.md](../../issue-template.md). Save drafts under `issues/<slug>.md` (gitignored). When work is done, move the file to `issues/processed/`.
 
 ## Draft
 

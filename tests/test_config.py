@@ -198,7 +198,7 @@ def test_setup_empty_model_list(monkeypatch, tmp_path: Path):
     cfg = tmp_path / "dockai.toml"
     cfg.write_text('[ollama]\nmodel = "keep-me"\n', encoding="utf-8")
 
-    with pytest.raises(SetupConfigError, match="No models are available"):
+    with pytest.raises(SetupConfigError, match="ollama pull qwen2.5:3b"):
         run_setup_config(
             config_path=cfg,
             prompt_url=lambda: "127.0.0.1",
@@ -209,6 +209,30 @@ def test_setup_empty_model_list(monkeypatch, tmp_path: Path):
     with cfg.open("rb") as fh:
         data = tomllib.load(fh)
     assert data["ollama"]["model"] == "keep-me"
+
+
+def test_setup_config_prints_next_steps(monkeypatch, tmp_path: Path):
+    _isolate_config_env(monkeypatch, tmp_path)
+
+    def fake_setup_config(*, config_path, **_kwargs):
+        config_path.write_text(
+            '[ollama]\nhost = "http://127.0.0.1:11434"\nmodel = "qwen2.5:3b"\n',
+            encoding="utf-8",
+        )
+        return config_path
+
+    monkeypatch.setattr("dockai.cli.run_setup_config", fake_setup_config)
+    result = CliRunner().invoke(
+        app,
+        ["setup", "config"],
+        input="",
+    )
+
+    assert result.exit_code == 0
+    assert "Next steps" in result.output
+    assert "dockai doctor" in result.output
+    assert "dockai containers" in result.output
+    assert "dockai chat" in result.output
 
 
 def test_load_settings_normalizes_shorthand_host_in_file(monkeypatch, tmp_path: Path):
