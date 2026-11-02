@@ -8,7 +8,7 @@ alwaysApply: false
 When the user asks for a GitHub issue, ticket, bug report, or feature spec to paste into GitHub:
 
 1. Read [.cursor/issue-template.md](../issue-template.md) and follow it exactly.
-2. Write **one markdown file** under `issues/<slug>.md` (folder is gitignored).
+2. Write **one markdown file** under `issues/<slug>.md` (folder is gitignored). After the user ships the fix, **move** it to `issues/processed/<slug>.md`.
 3. Ground content in the repo: real paths (`src/dockai/...`), commands (`dockai ask`, `dockai chat`), and `tests/test_*.py` names.
 4. Required sections (in order): **What is the issue**, **How to reproduce**, **Acceptance criteria**, **Test cases**.
 5. Title is imperative, outcome-focused, under 80 characters. Put it in `**GitHub title:**` at the top of the draft.

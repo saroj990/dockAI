@@ -2,6 +2,8 @@
 
 Use one file per issue under `issues/` (gitignored). Filename: short kebab-case slug, e.g. `issues/ollama-preflight-health.md`.
 
+When implementation is done, move the file to `issues/processed/<slug>.md` (see `issues/processed/README.md`).
+
 At the top of each draft:
 
 ```markdown
