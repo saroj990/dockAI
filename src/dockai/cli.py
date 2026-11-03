@@ -338,14 +338,19 @@ def setup_config_cmd(ctx: typer.Context) -> None:
         return typer.prompt("Select model number", type=int)
 
     try:
-        written = run_setup_config(
+        outcome = run_setup_config(
             config_path=target,
             prompt_url=prompt_url,
             prompt_model_index=prompt_model_index,
         )
-        console.print(f"[green]Saved Ollama settings to {written}[/green]")
+        console.print(f"[green]Saved Ollama settings to {outcome.path}[/green]")
+        for warning in outcome.warnings:
+            console.print(f"[yellow]Warning:[/yellow] {warning}")
+        console.print("\n[bold]Readiness check:[/bold]")
+        saved_settings = load_settings(config_path=outcome.path)
+        run_doctor(saved_settings, require_ollama=True)
         console.print("\n[bold]Next steps:[/bold]")
-        console.print("  1. Run `dockai doctor` to verify Docker and Ollama readiness.")
+        console.print("  1. Run `dockai doctor` again anytime to verify Docker and Ollama.")
         console.print("  2. Run `dockai containers` for a Docker-only smoke test.")
         console.print("  3. Run `dockai chat` to start the natural-language assistant.")
     except SetupConfigError as exc:
