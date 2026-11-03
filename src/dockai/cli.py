@@ -27,6 +27,7 @@ from dockai.formatting import (
     print_error,
     print_inspect,
     print_logs,
+    print_ollama_unavailable_guidance,
     print_search,
 )
 from dockai.llm.ollama import OllamaNotFoundError, OllamaProvider
@@ -80,7 +81,7 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
-def _handle(exc: Exception) -> None:
+def _handle(exc: Exception, *, user_prompt: str | None = None) -> None:
     if isinstance(exc, AmbiguousContainerError):
         print_error(str(exc))
         print_containers(exc.matches, title="Matches")
@@ -92,6 +93,10 @@ def _handle(exc: Exception) -> None:
             print_docker_not_running(permission_hint=True)
         else:
             print_error(str(exc))
+        raise typer.Exit(code=1) from exc
+    if isinstance(exc, OllamaNotFoundError):
+        print_error(str(exc))
+        print_ollama_unavailable_guidance(user_prompt=user_prompt)
         raise typer.Exit(code=1) from exc
     if isinstance(exc, DockaiError):
         print_error(str(exc))
@@ -183,8 +188,7 @@ def _run_ask(
     try:
         cfg = _prepare_ollama_settings(settings, model=model)
     except OllamaNotFoundError as exc:
-        _handle(exc)
-        return
+        _handle(exc, user_prompt=prompt)
     llm = OllamaProvider(settings=cfg, model=model)
     try:
         started = time.perf_counter()
@@ -378,7 +382,6 @@ def chat_cmd(
         cfg = _prepare_ollama_settings(settings, model=model)
     except OllamaNotFoundError as exc:
         _handle(exc)
-        return
     llm = OllamaProvider(settings=cfg, model=model)
     try:
         try:

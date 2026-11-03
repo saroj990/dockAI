@@ -37,6 +37,98 @@ def print_docker_not_running(*, permission_hint: bool = False) -> None:
         )
 
 
+OLLAMA_UNAVAILABLE_DOCKER_MARKER = "Docker still works"
+OLLAMA_UNAVAILABLE_FIX_MARKER = "Fix Ollama"
+
+_LOGS_FOR_TARGET = re.compile(
+    r"\blogs?\s+(?:for|of|from)\s+([\w][\w.-]*)",
+    re.IGNORECASE,
+)
+_LOGS_OF_TARGET = re.compile(
+    r"([\w][\w.-]*)\s+logs?\b",
+    re.IGNORECASE,
+)
+_LOG_TARGET_SKIP = frozenset({"the", "my", "show", "get", "tail", "last"})
+
+
+def _extract_log_target_from_prompt(prompt: str) -> str | None:
+    match = _LOGS_FOR_TARGET.search(prompt)
+    if match:
+        return match.group(1)
+    match = _LOGS_OF_TARGET.search(prompt)
+    if match and match.group(1).lower() not in _LOG_TARGET_SKIP:
+        return match.group(1)
+    return None
+
+
+def ollama_unavailable_docker_examples(user_prompt: str | None) -> list[str]:
+    """Copy-paste Docker-only commands tailored to the user's NL prompt class."""
+    if not user_prompt or not user_prompt.strip():
+        return [
+            "dockai containers",
+            "dockai logs <name>",
+            "dockai search <keyword>",
+        ]
+    text = user_prompt.strip()
+    lower = text.lower()
+
+    if re.search(r"\blogs?\b", lower):
+        target = _extract_log_target_from_prompt(text)
+        if target:
+            return [
+                f"dockai logs {target}",
+                f"dockai inspect {target}",
+                "dockai containers",
+            ]
+        return ["dockai logs <name>", "dockai inspect <name>", "dockai containers"]
+
+    if re.search(
+        r"\b(restart|crash|failing|broken|wrong|troubleshoot|diagnos|why)\b",
+        lower,
+    ):
+        from dockai.agent.intent import extract_diagnose_container_target
+
+        target = extract_diagnose_container_target(text)
+        if target:
+            return [
+                f"dockai logs {target}",
+                f"dockai inspect {target}",
+                "dockai containers",
+            ]
+        return [
+            "dockai logs <name>",
+            "dockai inspect <name>",
+            "dockai containers",
+        ]
+
+    if re.search(r"\b(containers?|running|list|uptime|how many)\b", lower):
+        return [
+            "dockai containers",
+            "dockai uptime",
+            "dockai search <keyword>",
+        ]
+
+    return [
+        "dockai containers",
+        "dockai logs <name>",
+        "dockai inspect <name>",
+    ]
+
+
+def print_ollama_unavailable_guidance(*, user_prompt: str | None = None) -> None:
+    """Next steps when NL mode needs Ollama but the model host is unreachable."""
+    examples = ollama_unavailable_docker_examples(user_prompt)
+    console.print()
+    console.print(f"[dim]{OLLAMA_UNAVAILABLE_DOCKER_MARKER}:[/dim]")
+    for line in examples[:3]:
+        console.print(f"[dim]  {line}[/dim]")
+    console.print(
+        f"[dim]{OLLAMA_UNAVAILABLE_FIX_MARKER}: "
+        "`dockai config`, `dockai setup config`, `dockai doctor`. "
+        "See docs/FEATURES.md for the full command list.[/dim]"
+    )
+
+
 CHAT_WELCOME_HINT_MARKER = "what commands can I run"
 
 
