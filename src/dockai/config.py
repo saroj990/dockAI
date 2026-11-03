@@ -14,8 +14,7 @@ DEFAULT_OLLAMA_PORT = 11434
 DEFAULT_OLLAMA_HOST = f"http://127.0.0.1:{DEFAULT_OLLAMA_PORT}"
 DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
 DEFAULT_OLLAMA_TIMEOUT = 120.0
-DEFAULT_OLLAMA_HEALTH_TIMEOUT = 5.0
-MAX_OLLAMA_HEALTH_TIMEOUT = 5.0
+DEFAULT_OLLAMA_HEALTH_TIMEOUT = 10.0
 DEFAULT_DOCKER_TIMEOUT = 60.0
 
 
@@ -75,8 +74,8 @@ def _as_float(value: object, default: float) -> float:
 
 
 def _as_health_timeout(value: object) -> float:
-    """Preflight ping budget (seconds); capped for fast fallback to local Ollama."""
-    return min(MAX_OLLAMA_HEALTH_TIMEOUT, _as_float(value, DEFAULT_OLLAMA_HEALTH_TIMEOUT))
+    """Preflight ping budget (seconds) for GET /api/tags before NL uses Ollama."""
+    return _as_float(value, DEFAULT_OLLAMA_HEALTH_TIMEOUT)
 
 
 def _as_bool(value: object, default: bool) -> bool:

@@ -21,17 +21,45 @@ class OllamaNotFoundError(DockaiError):
     """Ollama HTTP API is not reachable at the given host."""
 
 
+def ollama_unreachable_message(
+    *,
+    host: str,
+    health_timeout: float,
+    exc: BaseException | None = None,
+) -> str:
+    base = host.rstrip("/")
+    detail = f" ({exc})" if exc else ""
+    return (
+        f"Ollama is not reachable at {base}{detail} "
+        f"(health check timed out after {health_timeout:g}s). "
+        "Check that Ollama is running, the host/IP is correct, and VPN or firewall "
+        "allows TCP to port 11434."
+    )
+
+
 def preflight_http_timeout(total_seconds: float) -> httpx.Timeout:
     """
     Timeouts for GET /api/tags during health preflight.
 
     Short connect so unreachable remote hosts fail fast; read uses the rest of
-    the budget (whole preflight is capped at 5s in settings).
+    the health budget.
     """
-    total = max(1.0, min(5.0, float(total_seconds)))
-    connect = min(2.0, total * 0.45)
+    total = max(1.0, float(total_seconds))
+    connect = min(total, max(1.0, total * 0.45))
     read = max(1.0, total - connect)
     return httpx.Timeout(connect=connect, read=read, write=read, pool=connect)
+
+
+def inference_http_timeout(*, connect_seconds: float, read_seconds: float) -> httpx.Timeout:
+    """Split timeout for /api/chat: fast connect, long read for slow inference."""
+    connect = max(1.0, float(connect_seconds))
+    read = max(connect, float(read_seconds))
+    return httpx.Timeout(connect=connect, read=read, write=read, pool=connect)
+
+
+def assert_ollama_reachable(host: str, *, health_timeout: float) -> None:
+    """Raise OllamaNotFoundError when GET /api/tags fails within the health budget."""
+    list_ollama_models(host, timeout=health_timeout, preflight=True)
 
 
 def list_ollama_models(
@@ -53,6 +81,14 @@ def list_ollama_models(
         resp.raise_for_status()
         data = resp.json()
     except httpx.HTTPError as exc:
+        if preflight:
+            raise OllamaNotFoundError(
+                ollama_unreachable_message(
+                    host=base,
+                    health_timeout=timeout,
+                    exc=exc,
+                )
+            ) from exc
         raise OllamaNotFoundError(
             f"Ollama not found at {base}. Is it running and is the URL correct?"
         ) from exc
@@ -84,8 +120,14 @@ class OllamaProvider:
         cfg = settings or load_settings(model=model)
         self.host = (host or cfg.ollama_host).rstrip("/")
         self.model = model or cfg.ollama_model
-        resolved = cfg.ollama_timeout if timeout is None else timeout
-        self._client = client or httpx.Client(base_url=self.host, timeout=resolved)
+        read_timeout = cfg.ollama_timeout if timeout is None else timeout
+        self._client = client or httpx.Client(
+            base_url=self.host,
+            timeout=inference_http_timeout(
+                connect_seconds=cfg.ollama_health_timeout,
+                read_seconds=read_timeout,
+            ),
+        )
         self._owns_client = client is None
 
     def close(self) -> None:

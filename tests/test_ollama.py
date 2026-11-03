@@ -2,6 +2,7 @@ import json
 
 import httpx
 
+from dockai.config import Settings
 from dockai.llm.base import ChatMessage
 from dockai.llm.ollama import OllamaProvider
 
@@ -58,3 +59,22 @@ def test_ollama_parses_string_arguments():
         [ChatMessage(role="user", content="find flink")], tools=[]
     )
     assert msg.tool_calls[0].arguments == {"keyword": "flink"}
+
+
+def test_ollama_provider_uses_split_timeout():
+    settings = Settings(
+        ollama_host="http://127.0.0.1:11434",
+        ollama_model="qwen2.5:3b",
+        ollama_timeout=120.0,
+        ollama_health_timeout=10.0,
+        config_path=None,
+    )
+    provider = OllamaProvider(settings=settings)
+    try:
+        timeout = provider._client.timeout
+        assert timeout.connect is not None
+        assert timeout.read is not None
+        assert float(timeout.connect) <= 10.0
+        assert float(timeout.read) == 120.0
+    finally:
+        provider.close()

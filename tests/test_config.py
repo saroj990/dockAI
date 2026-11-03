@@ -33,7 +33,18 @@ def test_load_defaults(monkeypatch, tmp_path: Path):
     settings = load_settings()
     assert settings.ollama_host == "http://127.0.0.1:11434"
     assert settings.ollama_model == "llama3.1:8b"
+    assert settings.ollama_health_timeout == 10.0
     assert settings.config_path is None
+
+
+def test_config_loads_health_timeout(monkeypatch, tmp_path: Path):
+    _isolate_config_env(monkeypatch, tmp_path)
+    cfg = tmp_path / "dockai.toml"
+    cfg.write_text("[ollama]\nhealth_timeout = 7\n", encoding="utf-8")
+    assert load_settings().ollama_health_timeout == 7.0
+
+    monkeypatch.setenv("DOCKAI_OLLAMA_HEALTH_TIMEOUT", "9")
+    assert load_settings().ollama_health_timeout == 9.0
 
 
 def test_load_from_toml(monkeypatch, tmp_path: Path):

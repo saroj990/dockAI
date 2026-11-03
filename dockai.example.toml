@@ -14,8 +14,7 @@ model = "llama3.1:8b"
 # Request timeout in seconds
 timeout = 120
 # Preflight reachability check (seconds) before NL / chat uses Ollama
-# Max 5 — remote preflight ping budget before trying fallback_host
-health_timeout = 5
+health_timeout = 10
 # Optional fallback when host is remote and unreachable (default: local 127.0.0.1:11434)
 # fallback_host = "http://127.0.0.1:11434"
 # Model on the fallback host (default: same as model above)

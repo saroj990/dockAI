@@ -86,6 +86,7 @@ def test_ask_troubleshoot_prompt_suggests_logs_for_named_container():
 
     with (
         patch("dockai.cli._ctx_settings", return_value=settings),
+        patch("dockai.cli._can_skip_ollama_preflight", return_value=False),
         patch(
             "dockai.cli._prepare_ollama_settings",
             side_effect=err,
