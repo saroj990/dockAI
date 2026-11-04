@@ -1,0 +1,7 @@
+name: demo-stack
+
+services:
+  web:
+    image: nginx:latest
+  db:
+    image: postgres:16

@@ -5,11 +5,19 @@ from __future__ import annotations
 import sys
 import time
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Optional
 
 import typer
 
 from dockai import __version__
+from dockai.compose_context import (
+    ComposeContextError,
+    ComposeProjectStatus,
+    build_compose_project_status,
+    compose_up,
+    find_compose_file,
+)
 from dockai.agent import ChatSession, run_agent
 from dockai.config import Settings, config_path_for_write, load_settings
 from dockai.setup_config import SetupConfigError, run_setup_config
@@ -27,6 +35,7 @@ from dockai.formatting import (
     print_error,
     print_inspect,
     print_logs,
+    print_compose_status,
     print_ollama_unavailable_guidance,
     print_search,
 )
@@ -53,6 +62,7 @@ _SUBCOMMANDS = frozenset(
     {
         "ask",
         "chat",
+        "compose",
         "config",
         "containers",
         "doctor",
@@ -151,6 +161,89 @@ def _confirm_and_apply(client: Any, pending: dict[str, Any]) -> None:
 
 def _ctx_settings(ctx: typer.Context) -> Settings:
     return ctx.ensure_object(dict).setdefault("settings", load_settings())
+
+
+def _compose_rows(status: ComposeProjectStatus) -> list[dict[str, str]]:
+    return [
+        {
+            "service": s.name,
+            "state": s.state,
+            "container": s.container_name or "",
+            "status": s.status or "",
+        }
+        for s in status.services
+    ]
+
+
+def _offer_compose_start(status: ComposeProjectStatus, compose_file: Path) -> None:
+    stopped = status.stopped_or_missing()
+    if not stopped:
+        console.print("[green]All compose services are running.[/green]")
+        return
+    names = ", ".join(s.name for s in stopped)
+    console.print(f"[yellow]Not running:[/yellow] {names}")
+    choice = typer.prompt(
+        "Start stopped services? [A] all  [B] choose one  [N] no",
+        default="N",
+    ).strip().upper()
+    if choice in {"", "N"}:
+        console.print("[dim]No services started.[/dim]")
+        return
+    try:
+        if choice == "A":
+            with busy_status("Starting compose services…"):
+                compose_up(compose_file, services=[s.name for s in stopped])
+            console.print("[green]Compose services started.[/green]")
+            return
+        if choice == "B":
+            console.print("[bold]Stopped or missing services:[/bold]")
+            for idx, svc in enumerate(stopped, start=1):
+                console.print(f"  {idx}. {svc.name} ({svc.state})")
+            pick = typer.prompt("Service number", type=int)
+            if pick < 1 or pick > len(stopped):
+                raise ComposeContextError(
+                    f"Choose a number between 1 and {len(stopped)}."
+                )
+            target = stopped[pick - 1].name
+            with busy_status(f"Starting `{target}`…"):
+                compose_up(compose_file, services=[target])
+            console.print(f"[green]Started `{target}`.[/green]")
+            return
+        raise ComposeContextError("Enter A, B, or N.")
+    except ComposeContextError as exc:
+        print_error(str(exc))
+        raise typer.Exit(code=1) from exc
+
+
+def _run_compose_here(ctx: typer.Context, directory: Path) -> None:
+    compose_file = find_compose_file(directory)
+    if compose_file is None:
+        print_error(
+            f"No Compose file in {directory.resolve()}. "
+            "Expected one of: compose.yaml, compose.yml, docker-compose.yaml, "
+            "docker-compose.yml."
+        )
+        raise typer.Exit(code=1)
+    settings = _ctx_settings(ctx)
+    try:
+        client = get_client(settings=settings)
+        status = build_compose_project_status(client, compose_file)
+    except DockerUnavailableError as exc:
+        _handle(exc)
+        return
+    except ComposeContextError as exc:
+        print_error(str(exc))
+        raise typer.Exit(code=1) from exc
+
+    ctx.ensure_object(dict)["compose_project"] = status
+    print_compose_status(
+        compose_file=str(status.compose_file),
+        project_name=status.project_name,
+        running_count=status.running_count,
+        total_count=status.total_count,
+        rows=_compose_rows(status),
+    )
+    _offer_compose_start(status, compose_file)
 
 
 def _ollama_preflight_status_message(settings: Settings) -> str:
@@ -271,6 +364,18 @@ def main(
         settings = replace(settings, verbose=True)
     configure_diagnostics(verbose=settings.verbose)
     ctx.obj["settings"] = settings
+
+
+@app.command("compose")
+def compose_cmd(
+    ctx: typer.Context,
+    directory: str = typer.Argument(
+        ".",
+        help="Directory containing a Compose file (default: current directory).",
+    ),
+) -> None:
+    """Load Compose from this folder, show service status, optionally start services."""
+    _run_compose_here(ctx, Path(directory))
 
 
 @app.command("config")
@@ -572,6 +677,8 @@ def main_cli() -> None:
     args = sys.argv[1:]
     if args:
         first = args[0]
-        if first not in _SUBCOMMANDS and not first.startswith("-"):
+        if first == ".":
+            sys.argv[1:2] = ["compose", "."]
+        elif first not in _SUBCOMMANDS and not first.startswith("-"):
             sys.argv.insert(1, "ask")
     app()

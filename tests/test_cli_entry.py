@@ -52,6 +52,19 @@ def test_config_subcommand_not_rewritten(monkeypatch):
     assert seen[1] == "config"
 
 
+def test_dot_rewrites_to_compose(monkeypatch):
+    seen: list[str] = []
+
+    def fake_app():
+        seen.extend(sys.argv)
+
+    monkeypatch.setattr("dockai.cli.app", fake_app)
+    monkeypatch.setattr(sys, "argv", ["dockai", "."])
+    main_cli()
+    assert seen[1] == "compose"
+    assert seen[2] == "."
+
+
 def test_setup_subcommand_not_rewritten(monkeypatch):
     seen: list[str] = []
 
