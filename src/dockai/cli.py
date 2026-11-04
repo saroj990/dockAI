@@ -45,6 +45,7 @@ from dockai.llm.docker_only import DockerOnlyLLM
 from dockai.llm.ollama import OllamaNotFoundError, OllamaProvider
 from dockai.llm.resolve_host import is_loopback_ollama_host, settings_with_resolved_ollama
 from dockai.present import render_presentation
+from dockai.prompts import prompt_numbered_model_choice
 from dockai.tools import (
     apply_action,
     get_container_logs,
@@ -584,10 +585,7 @@ def setup_config_cmd(ctx: typer.Context) -> None:
         )
 
     def prompt_model_index(models: list[str]) -> int:
-        console.print("[bold]Available models:[/bold]")
-        for idx, name in enumerate(models, start=1):
-            console.print(f"  {idx}. {name}")
-        return typer.prompt("Select model number", type=int)
+        return prompt_numbered_model_choice(models, console=console)
 
     try:
         written = run_setup_config(
