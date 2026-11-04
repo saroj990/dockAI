@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from dockai.cli import app
 from dockai.compose_context import ComposeProjectStatus, ComposeServiceStatus
+from dockai.llm.ollama import OllamaNotFoundError
 from dockai.config import Settings
 
 
@@ -51,6 +52,42 @@ def test_compose_cmd_success_shows_running_counts(tmp_path: Path, monkeypatch):
     assert "demo" in result.output
     offer.assert_called_once()
     chat.assert_called_once()
+
+
+def test_compose_enters_docker_only_chat_when_ollama_missing(tmp_path: Path, monkeypatch):
+    compose = tmp_path / "compose.yaml"
+    compose.write_text(
+        "name: demo\nservices:\n  web:\n    image: nginx\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    status = ComposeProjectStatus(
+        compose_file=compose,
+        project_name="demo",
+        services=(ComposeServiceStatus(name="web", state="running"),),
+    )
+    err = OllamaNotFoundError("Model missing.")
+
+    with (
+        patch("dockai.cli._ctx_settings", return_value=_settings()),
+        patch("dockai.cli.get_client", return_value=MagicMock()),
+        patch("dockai.cli.build_compose_project_status", return_value=status),
+        patch("dockai.cli._offer_compose_start"),
+        patch(
+            "dockai.cli._prepare_ollama_settings",
+            side_effect=err,
+        ),
+        patch("dockai.cli.typer.prompt", side_effect=["exit"]),
+        patch("dockai.cli.typer.confirm", return_value=True),
+        patch("dockai.cli.ChatSession") as session_cls,
+    ):
+        session_cls.return_value.ask = MagicMock()
+        session_cls.return_value.focus_container = None
+        result = CliRunner().invoke(app, ["compose", "."])
+
+    assert result.exit_code == 0
+    assert "Ollama unavailable" in result.output
+    assert "Docker still works" in result.output
 
 
 def test_compose_cmd_fails_without_compose_file(tmp_path: Path, monkeypatch):

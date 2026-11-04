@@ -41,6 +41,7 @@ from dockai.formatting import (
     print_ollama_unavailable_guidance,
     print_search,
 )
+from dockai.llm.docker_only import DockerOnlyLLM
 from dockai.llm.ollama import OllamaNotFoundError, OllamaProvider
 from dockai.llm.resolve_host import is_loopback_ollama_host, settings_with_resolved_ollama
 from dockai.present import render_presentation
@@ -251,7 +252,17 @@ def _run_compose_here(
         rows=_compose_rows(status),
     )
     _offer_compose_start(status, compose_file)
-    _run_interactive_chat(settings, model=model, compose_status=status)
+    try:
+        status = build_compose_project_status(client, compose_file)
+        ctx.ensure_object(dict)["compose_project"] = status
+    except ComposeContextError:
+        pass
+    _run_interactive_chat(
+        settings,
+        model=model,
+        compose_status=status,
+        docker_only_if_ollama_down=True,
+    )
 
 
 _CHAT_EXIT_WORDS = frozenset(
@@ -287,14 +298,27 @@ def _run_interactive_chat(
     *,
     model: str | None = None,
     compose_status: ComposeProjectStatus | None = None,
+    docker_only_if_ollama_down: bool = False,
 ) -> None:
     """Interactive session until the user confirms exit."""
+    docker_only_mode = False
+    cfg = replace(settings, ollama_model=model or settings.ollama_model)
     try:
         cfg = _prepare_ollama_settings(settings, model=model)
     except OllamaNotFoundError as exc:
-        _handle(exc)
-        return
-    llm = OllamaProvider(settings=cfg, model=model)
+        if docker_only_if_ollama_down:
+            print_error(str(exc))
+            print_ollama_unavailable_guidance(user_prompt=None)
+            docker_only_mode = True
+        else:
+            _handle(exc)
+            return
+
+    llm: OllamaProvider | DockerOnlyLLM
+    if docker_only_mode:
+        llm = DockerOnlyLLM()
+    else:
+        llm = OllamaProvider(settings=cfg, model=model)
     try:
         try:
             client = get_client(settings=cfg)
@@ -316,6 +340,11 @@ def _run_interactive_chat(
             console.print(
                 "[bold]dockai chat[/bold] — follow-ups stay in this session. "
                 "Say [cyan]exit[/cyan] or [cyan]bye[/cyan] to quit (confirmation required)."
+            )
+        if docker_only_mode:
+            console.print(
+                "[dim]Ollama unavailable — Docker shortcuts (logs, list, inspect) "
+                "still work in this session.[/dim]"
             )
         if settings.chat_hints:
             print_chat_welcome_hints()
