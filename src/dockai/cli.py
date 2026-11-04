@@ -15,9 +15,11 @@ from dockai.compose_context import (
     ComposeContextError,
     ComposeProjectStatus,
     build_compose_project_status,
+    compose_chat_context,
     compose_up,
     find_compose_file,
 )
+from dockai.llm.base import ChatMessage
 from dockai.agent import ChatSession, run_agent
 from dockai.config import Settings, config_path_for_write, load_settings
 from dockai.setup_config import SetupConfigError, run_setup_config
@@ -215,7 +217,12 @@ def _offer_compose_start(status: ComposeProjectStatus, compose_file: Path) -> No
         raise typer.Exit(code=1) from exc
 
 
-def _run_compose_here(ctx: typer.Context, directory: Path) -> None:
+def _run_compose_here(
+    ctx: typer.Context,
+    directory: Path,
+    *,
+    model: str | None = None,
+) -> None:
     compose_file = find_compose_file(directory)
     if compose_file is None:
         print_error(
@@ -244,6 +251,112 @@ def _run_compose_here(ctx: typer.Context, directory: Path) -> None:
         rows=_compose_rows(status),
     )
     _offer_compose_start(status, compose_file)
+    _run_interactive_chat(settings, model=model, compose_status=status)
+
+
+_CHAT_EXIT_WORDS = frozenset(
+    {
+        "exit",
+        "quit",
+        "q",
+        "bye",
+        "goodbye",
+        "good bye",
+        "see you",
+        "see ya",
+    }
+)
+
+
+def is_chat_exit_request(text: str) -> bool:
+    """True when the user is trying to leave interactive chat."""
+    normalized = " ".join(text.strip().lower().split())
+    if not normalized:
+        return False
+    if normalized in _CHAT_EXIT_WORDS:
+        return True
+    return normalized.startswith("bye ") or normalized.startswith("goodbye ")
+
+
+def _confirm_leave_chat(*, reason: str = "Leave chat?") -> bool:
+    return typer.confirm(reason, default=False)
+
+
+def _run_interactive_chat(
+    settings: Settings,
+    *,
+    model: str | None = None,
+    compose_status: ComposeProjectStatus | None = None,
+) -> None:
+    """Interactive session until the user confirms exit."""
+    try:
+        cfg = _prepare_ollama_settings(settings, model=model)
+    except OllamaNotFoundError as exc:
+        _handle(exc)
+        return
+    llm = OllamaProvider(settings=cfg, model=model)
+    try:
+        try:
+            client = get_client(settings=cfg)
+        except DockerUnavailableError as exc:
+            _handle(exc)
+            return
+        session = ChatSession(llm=llm, client=client)
+        if compose_status is not None:
+            session.messages.append(
+                ChatMessage(role="system", content=compose_chat_context(compose_status))
+            )
+        if compose_status is not None:
+            console.print(
+                "[bold]dockai chat[/bold] — scoped to Compose project "
+                f"[cyan]{compose_status.project_name}[/cyan]. "
+                "Say [cyan]exit[/cyan] or [cyan]bye[/cyan] to leave (confirmation required)."
+            )
+        else:
+            console.print(
+                "[bold]dockai chat[/bold] — follow-ups stay in this session. "
+                "Say [cyan]exit[/cyan] or [cyan]bye[/cyan] to quit (confirmation required)."
+            )
+        if settings.chat_hints:
+            print_chat_welcome_hints()
+        while True:
+            try:
+                line = typer.prompt("You")
+            except (EOFError, KeyboardInterrupt):
+                console.print()
+                if _confirm_leave_chat(reason="Leave chat?"):
+                    break
+                continue
+            text = line.strip()
+            if not text:
+                continue
+            if is_chat_exit_request(text):
+                if _confirm_leave_chat(reason="Leave chat?"):
+                    break
+                continue
+            try:
+                started = time.perf_counter()
+                with busy_status(
+                    "Working on it — fetching results, please wait…"
+                ) as status:
+                    result = session.ask(
+                        text,
+                        on_progress=status.update,
+                    )
+                _print_agent_result(result, chat=True)
+                print_elapsed(time.perf_counter() - started, result.timings)
+                if result.pending_action:
+                    _confirm_and_apply(client, result.pending_action)
+                if session.focus_container:
+                    console.print(
+                        f"[dim]Focused: {session.focus_container}[/dim]"
+                    )
+            except DockaiError as exc:
+                print_error(str(exc))
+            except Exception as exc:  # noqa: BLE001
+                _handle(exc)
+    finally:
+        llm.close()
 
 
 def _ollama_preflight_status_message(settings: Settings) -> str:
@@ -373,9 +486,14 @@ def compose_cmd(
         ".",
         help="Directory containing a Compose file (default: current directory).",
     ),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        help="Ollama model name (overrides config / DOCKAI_MODEL).",
+    ),
 ) -> None:
-    """Load Compose from this folder, show service status, optionally start services."""
-    _run_compose_here(ctx, Path(directory))
+    """Compose status in this folder, then interactive chat for that project."""
+    _run_compose_here(ctx, Path(directory), model=model)
 
 
 @app.command("config")
@@ -482,59 +600,7 @@ def chat_cmd(
     ),
 ) -> None:
     """Interactive chat with follow-ups in one session."""
-    settings = _ctx_settings(ctx)
-    try:
-        cfg = _prepare_ollama_settings(settings, model=model)
-    except OllamaNotFoundError as exc:
-        _handle(exc)
-    llm = OllamaProvider(settings=cfg, model=model)
-    try:
-        try:
-            client = get_client(settings=cfg)
-        except DockerUnavailableError as exc:
-            _handle(exc)
-            return
-        session = ChatSession(llm=llm, client=client)
-        console.print(
-            "[bold]dockai chat[/bold] — follow-ups stay in this session. "
-            "Type [cyan]exit[/cyan] to quit."
-        )
-        if settings.chat_hints:
-            print_chat_welcome_hints()
-        while True:
-            try:
-                line = typer.prompt("You")
-            except (EOFError, KeyboardInterrupt):
-                console.print()
-                break
-            text = line.strip()
-            if not text:
-                continue
-            if text.lower() in {"exit", "quit", "q"}:
-                break
-            try:
-                started = time.perf_counter()
-                with busy_status(
-                    "Working on it — fetching results, please wait…"
-                ) as status:
-                    result = session.ask(
-                        text,
-                        on_progress=status.update,
-                    )
-                _print_agent_result(result, chat=True)
-                print_elapsed(time.perf_counter() - started, result.timings)
-                if result.pending_action:
-                    _confirm_and_apply(client, result.pending_action)
-                if session.focus_container:
-                    console.print(
-                        f"[dim]Focused: {session.focus_container}[/dim]"
-                    )
-            except DockaiError as exc:
-                print_error(str(exc))
-            except Exception as exc:  # noqa: BLE001
-                _handle(exc)
-    finally:
-        llm.close()
+    _run_interactive_chat(_ctx_settings(ctx), model=model)
 
 
 @app.command("containers")

@@ -53,6 +53,16 @@ class ComposeProjectStatus:
         return [s for s in self.services if s.state != "running"]
 
 
+def compose_chat_context(status: ComposeProjectStatus) -> str:
+    """Short system hint so chat turns prefer this Compose project's services."""
+    names = ", ".join(s.name for s in status.services)
+    return (
+        f"The user is working in Compose project `{status.project_name}` "
+        f"({status.compose_file}). Service names: {names}. "
+        "Prefer these names for logs, inspect, and diagnosis."
+    )
+
+
 def find_compose_file(directory: Path | None = None) -> Path | None:
     """Return a Compose file in `directory` (default: cwd), or None."""
     base = (directory or Path.cwd()).resolve()

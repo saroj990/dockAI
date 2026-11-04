@@ -6,7 +6,7 @@ Use **dockai** for Docker on your machine. These are **dockai** commands — not
 
 | Command | What it does |
 |---------|----------------|
-| `dockai .` / `dockai compose` | Compose file in this directory — service status; optional start (A/B) |
+| `dockai .` / `dockai compose` | Compose status, optional start (A/B), then **chat** for this project |
 | `dockai containers` | List containers (running by default; `-a` for all) |
 | `dockai uptime` | Uptime for running containers |
 | `dockai logs <name>` | Tail logs for one container |

@@ -42,6 +42,7 @@ def test_compose_cmd_success_shows_running_counts(tmp_path: Path, monkeypatch):
         patch("dockai.cli.get_client", return_value=MagicMock()),
         patch("dockai.cli.build_compose_project_status", return_value=status),
         patch("dockai.cli._offer_compose_start") as offer,
+        patch("dockai.cli._run_interactive_chat") as chat,
     ):
         result = CliRunner().invoke(app, ["compose", "."])
 
@@ -49,6 +50,7 @@ def test_compose_cmd_success_shows_running_counts(tmp_path: Path, monkeypatch):
     assert "1/1" in result.output
     assert "demo" in result.output
     offer.assert_called_once()
+    chat.assert_called_once()
 
 
 def test_compose_cmd_fails_without_compose_file(tmp_path: Path, monkeypatch):
@@ -80,6 +82,7 @@ def test_dot_entry_runs_compose(tmp_path: Path, monkeypatch):
         patch("dockai.cli.get_client", return_value=MagicMock()),
         patch("dockai.cli.build_compose_project_status", return_value=status),
         patch("dockai.cli._offer_compose_start"),
+        patch("dockai.cli._run_interactive_chat"),
     ):
         # CliRunner invokes Typer directly; `dockai .` is rewritten in main_cli.
         result = CliRunner().invoke(app, ["compose", "."])
