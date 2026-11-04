@@ -73,7 +73,7 @@ def test_resolve_ollama_host_remote_fail_local_ok():
     assert resolved.used_fallback is True
     assert resolved.host == DEFAULT_OLLAMA_HOST.rstrip("/")
     assert "unreachable" in (resolved.fallback_notice or "")
-    assert stages[0] == "Pinging remote Ollama (qwen2.5:3b)…"
+    assert "remote Ollama" in stages[0]
     assert stages[1].startswith("Pinging local model (")
 
 

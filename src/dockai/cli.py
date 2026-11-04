@@ -157,8 +157,24 @@ def _ollama_preflight_status_message(settings: Settings) -> str:
     host = settings.ollama_host.rstrip("/")
     model = settings.ollama_model
     if is_loopback_ollama_host(host):
-        return f"Pinging Ollama ({model})…"
-    return f"Pinging remote Ollama ({model})…"
+        return f"Checking Ollama at {host} ({model})…"
+    return f"Checking remote Ollama at {host} ({model})…"
+
+
+def _can_skip_ollama_preflight(prompt: str) -> bool:
+    """NL paths that never call the LLM do not need a preflight ping."""
+    from dockai.agent.help import try_dockai_help_response
+    from dockai.agent.policy import check_restricted_request
+    from dockai.agent.shortcuts import match_shortcut
+
+    text = prompt.strip()
+    if not text:
+        return False
+    if try_dockai_help_response(text) is not None:
+        return True
+    if check_restricted_request(text) is not None:
+        return True
+    return match_shortcut(text) is not None
 
 
 def _prepare_ollama_settings(
@@ -185,10 +201,12 @@ def _run_ask(
     settings: Settings,
     model: str | None = None,
 ) -> None:
-    try:
-        cfg = _prepare_ollama_settings(settings, model=model)
-    except OllamaNotFoundError as exc:
-        _handle(exc, user_prompt=prompt)
+    cfg = replace(settings, ollama_model=model or settings.ollama_model)
+    if not _can_skip_ollama_preflight(prompt):
+        try:
+            cfg = _prepare_ollama_settings(settings, model=model)
+        except OllamaNotFoundError as exc:
+            _handle(exc, user_prompt=prompt)
     llm = OllamaProvider(settings=cfg, model=model)
     try:
         started = time.perf_counter()
@@ -338,14 +356,19 @@ def setup_config_cmd(ctx: typer.Context) -> None:
         return typer.prompt("Select model number", type=int)
 
     try:
-        written = run_setup_config(
+        outcome = run_setup_config(
             config_path=target,
             prompt_url=prompt_url,
             prompt_model_index=prompt_model_index,
         )
-        console.print(f"[green]Saved Ollama settings to {written}[/green]")
+        console.print(f"[green]Saved Ollama settings to {outcome.path}[/green]")
+        for warning in outcome.warnings:
+            console.print(f"[yellow]Warning:[/yellow] {warning}")
+        console.print("\n[bold]Readiness check:[/bold]")
+        saved_settings = load_settings(config_path=outcome.path)
+        run_doctor(saved_settings, require_ollama=True)
         console.print("\n[bold]Next steps:[/bold]")
-        console.print("  1. Run `dockai doctor` to verify Docker and Ollama readiness.")
+        console.print("  1. Run `dockai doctor` again anytime to verify Docker and Ollama.")
         console.print("  2. Run `dockai containers` for a Docker-only smoke test.")
         console.print("  3. Run `dockai chat` to start the natural-language assistant.")
     except SetupConfigError as exc:

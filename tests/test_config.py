@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 from dockai.cli import app
 from dockai.config import load_settings, normalize_ollama_host, save_ollama_config
 from dockai.llm.ollama import OllamaNotFoundError
-from dockai.setup_config import SetupConfigError, run_setup_config
+from dockai.setup_config import SetupConfigError, SetupConfigResult, run_setup_config
 
 
 def _isolate_config_env(monkeypatch, tmp_path: Path) -> None:
@@ -33,7 +33,18 @@ def test_load_defaults(monkeypatch, tmp_path: Path):
     settings = load_settings()
     assert settings.ollama_host == "http://127.0.0.1:11434"
     assert settings.ollama_model == "llama3.1:8b"
+    assert settings.ollama_health_timeout == 10.0
     assert settings.config_path is None
+
+
+def test_config_loads_health_timeout(monkeypatch, tmp_path: Path):
+    _isolate_config_env(monkeypatch, tmp_path)
+    cfg = tmp_path / "dockai.toml"
+    cfg.write_text("[ollama]\nhealth_timeout = 7\n", encoding="utf-8")
+    assert load_settings().ollama_health_timeout == 7.0
+
+    monkeypatch.setenv("DOCKAI_OLLAMA_HEALTH_TIMEOUT", "9")
+    assert load_settings().ollama_health_timeout == 9.0
 
 
 def test_load_from_toml(monkeypatch, tmp_path: Path):
@@ -127,12 +138,13 @@ def test_setup_local_ip_without_scheme(monkeypatch, tmp_path: Path):
         assert host == "http://127.0.0.1:11434"
         return ["qwen2.5:3b"]
 
-    path = run_setup_config(
+    outcome = run_setup_config(
         prompt_url=fake_url,
         prompt_model_index=fake_index,
         list_models=fake_list,
     )
-    assert path == tmp_path / "dockai.toml"
+    assert outcome.path == tmp_path / "dockai.toml"
+    assert not outcome.warnings
     settings = load_settings()
     assert settings.ollama_host == "http://127.0.0.1:11434"
     assert settings.ollama_model == "qwen2.5:3b"
@@ -211,6 +223,29 @@ def test_setup_empty_model_list(monkeypatch, tmp_path: Path):
     assert data["ollama"]["model"] == "keep-me"
 
 
+def test_setup_config_warns_when_model_not_pulled(monkeypatch, tmp_path: Path):
+    _isolate_config_env(monkeypatch, tmp_path)
+    calls = 0
+
+    def fake_list(_host: str) -> list[str]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ["qwen2.5:3b"]
+        return ["llama3.1:8b"]
+
+    outcome = run_setup_config(
+        prompt_url=lambda: "127.0.0.1",
+        prompt_model_index=lambda _m: 1,
+        list_models=fake_list,
+    )
+    assert outcome.model == "qwen2.5:3b"
+    assert outcome.warnings
+    assert "ollama pull qwen2.5:3b" in outcome.warnings[0].lower()
+    settings = load_settings()
+    assert settings.ollama_model == "qwen2.5:3b"
+
+
 def test_setup_config_prints_next_steps(monkeypatch, tmp_path: Path):
     _isolate_config_env(monkeypatch, tmp_path)
 
@@ -219,9 +254,14 @@ def test_setup_config_prints_next_steps(monkeypatch, tmp_path: Path):
             '[ollama]\nhost = "http://127.0.0.1:11434"\nmodel = "qwen2.5:3b"\n',
             encoding="utf-8",
         )
-        return config_path
+        return SetupConfigResult(
+            path=config_path,
+            host="http://127.0.0.1:11434",
+            model="qwen2.5:3b",
+        )
 
     monkeypatch.setattr("dockai.cli.run_setup_config", fake_setup_config)
+    monkeypatch.setattr("dockai.cli.run_doctor", lambda *_a, **_k: 0)
     result = CliRunner().invoke(
         app,
         ["setup", "config"],
@@ -229,10 +269,38 @@ def test_setup_config_prints_next_steps(monkeypatch, tmp_path: Path):
     )
 
     assert result.exit_code == 0
+    assert "Readiness check" in result.output
     assert "Next steps" in result.output
     assert "dockai doctor" in result.output
     assert "dockai containers" in result.output
     assert "dockai chat" in result.output
+
+
+def test_setup_config_runs_doctor_after_save(monkeypatch, tmp_path: Path):
+    _isolate_config_env(monkeypatch, tmp_path)
+    doctor_calls: list[object] = []
+
+    def fake_setup_config(*, config_path, **_kwargs):
+        config_path.write_text(
+            '[ollama]\nhost = "http://127.0.0.1:11434"\nmodel = "qwen2.5:3b"\n',
+            encoding="utf-8",
+        )
+        return SetupConfigResult(
+            path=config_path,
+            host="http://127.0.0.1:11434",
+            model="qwen2.5:3b",
+        )
+
+    def fake_doctor(settings, *, require_ollama=True):
+        doctor_calls.append((settings.ollama_model, require_ollama))
+        return 0
+
+    monkeypatch.setattr("dockai.cli.run_setup_config", fake_setup_config)
+    monkeypatch.setattr("dockai.cli.run_doctor", fake_doctor)
+    result = CliRunner().invoke(app, ["setup", "config"], input="")
+
+    assert result.exit_code == 0
+    assert doctor_calls == [("qwen2.5:3b", True)]
 
 
 def test_load_settings_normalizes_shorthand_host_in_file(monkeypatch, tmp_path: Path):

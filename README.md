@@ -306,9 +306,9 @@ Resolve accepts flexible names for inspect / logs / start / stop / restart:
 
 | You type (CLI or model `target`) | Behavior |
 |----------------------------------|----------|
-| `saien-backend-api` | Exact match |
-| `saien backend api` | Separators ignored (`saienbackendapi`) |
-| `saen-backend-api` / `saie-backend-api` | Close typo → one clear match is used |
+| `api-server` | Exact match |
+| `api server` | Separators ignored (`apiserver`) |
+| `api-servr` / `ap-server` | Close typo → one clear match is used |
 | Several near matches | Ambiguous — lists candidates; you choose |
 | Short junk (`apo`) / unrelated (`redis-cache`) | Not found (no unsafe guess) |
 | Hex-like IDs | Exact ID match only — never fuzzy to a name |
@@ -316,9 +316,9 @@ Resolve accepts flexible names for inspect / logs / start / stop / restart:
 Examples:
 
 ```bash
-dockai inspect "saien backend api"
-dockai logs saen-backend-api -n 25
-dockai "show logs for saen-backend-api"
+dockai inspect "api server"
+dockai logs api-servr -n 25
+dockai "show logs for ap-server"
 ```
 
 Fuzzy matching is conservative: min name length, max edit distance 2, similarity threshold, and **no auto-pick** when two containers are equally close.
