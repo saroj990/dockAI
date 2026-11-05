@@ -21,7 +21,10 @@ from dockai.agent.registry import (
     execute_tool,
     ollama_tool_schemas,
 )
-from dockai.agent.intent import reconcile_troubleshoot_target
+from dockai.agent.intent import (
+    extract_diagnose_container_target,
+    reconcile_troubleshoot_target,
+)
 from dockai.agent.target_match import refine_tool_target
 from dockai.agent.scope import (
     apply_list_scope,
@@ -64,11 +67,14 @@ get_container_logs or inspect_container for a plain list.
 Default log window is the last 100 lines unless the user asks otherwise.
 When the user asks for logs, log lines, tail, or to dig into logs, call
 get_container_logs — not inspect_container.
-When the user asks why a container is failing, restarting, unhealthy, or wants
-log troubleshooting/diagnosis, you MUST call troubleshoot_container_logs before
-any diagnosis answer (not get_container_logs alone, and not a narrative without
-tools). Separate observed facts from hypotheses; cite log lines only if that tool
-returned them. Never claim you already fixed permissions or restarted a container.
+When the user asks why a container is failing, restarting, unhealthy, what is wrong,
+having issues, or wants log troubleshooting/diagnosis, you MUST call
+troubleshoot_container_logs before any diagnosis answer (not list_containers,
+not get_container_logs alone, and not a narrative without tools). Separate observed
+facts from hypotheses; cite log lines only if that tool returned them. You may
+suggest restart_container as a possible next step; do not propose exec, delete,
+prune, or stop unless the user explicitly asks. Never claim you already fixed
+permissions or restarted a container.
 For follow-ups like "that container" or "its logs", use the session focused container
 only when the context marks exactly one. If unclear, ask which container.
 To start, stop, or restart a container, call start_container / stop_container /
@@ -112,9 +118,15 @@ _DIAGNOSIS_ASK_RE = re.compile(
     r"\b("
     r"why|how\s+come|troubleshoot|diagnos|"
     r"what('?s|\s+is|\s+could|\s+might)\s+wrong|"
+    r"wrong\s+with|issue\s+with|problem\s+with|having\s+issues|"
+    r"something\s+wrong|not\s+working|"
     r"failing|broken|unhealthy|restarting"
     r")\b",
     re.IGNORECASE,
+)
+
+_LIST_MISROUTE_TOOLS = frozenset(
+    {"list_containers", "list_uptime", "search_containers"}
 )
 
 _STALE_DOCKER_CLAIM_RE = re.compile(
@@ -164,6 +176,25 @@ class AgentResult:
 def _is_diagnosis_ask(user_text: str) -> bool:
     text = normalize_user_text(user_text)
     return bool(text and _DIAGNOSIS_ASK_RE.search(text))
+
+
+def _tool_batch_is_list_only(batch: list[dict[str, Any]]) -> bool:
+    if not batch:
+        return False
+    return all(item.get("tool") in _LIST_MISROUTE_TOOLS for item in batch)
+
+
+def _diagnosis_target_from_ask(
+    user_text: str,
+    *,
+    focus_container: str | None,
+) -> str | None:
+    target = extract_diagnose_container_target(
+        user_text, focus_container=focus_container
+    )
+    if target:
+        return target
+    return focus_container
 
 
 def _has_successful_troubleshoot(collected: list[dict[str, Any]]) -> bool:
@@ -636,6 +667,85 @@ def run_agent(
                     )
                 pending_diagnosis_prefix = diagnosis_text
                 progress("Log signals ready — asking the model to summarize…")
+                continue
+
+            if (
+                _is_diagnosis_ask(user_text)
+                and not _has_successful_troubleshoot(collected)
+                and _tool_batch_is_list_only(batch)
+            ):
+                target = _diagnosis_target_from_ask(
+                    user_text, focus_container=focus_container
+                )
+                if target:
+                    progress("Diagnosis ask — reading inspect and logs…")
+                    ts_args = refine_tool_target(
+                        client,
+                        {"target": target},
+                        focus_container=focus_container,
+                    )
+                    t1 = time.perf_counter()
+                    ts_result = execute_tool(
+                        registry,
+                        client,
+                        "troubleshoot_container_logs",
+                        ts_args,
+                    )
+                    timings.append(
+                        (
+                            "docker troubleshoot_container_logs (diagnosis)",
+                            time.perf_counter() - t1,
+                        )
+                    )
+                    ts_item = {
+                        "tool": "troubleshoot_container_logs",
+                        "arguments": ts_args,
+                        "result": ts_result,
+                    }
+                    collected.append(ts_item)
+                    messages.append(
+                        ChatMessage(
+                            role="tool",
+                            name="troubleshoot_container_logs",
+                            content=json.dumps(ts_result, default=str),
+                        )
+                    )
+                    troubleshoot_data = _troubleshoot_data_from_batch([ts_item])
+                    if troubleshoot_data is not None:
+                        built = presentation_from_tool(
+                            "troubleshoot_container_logs",
+                            troubleshoot_data,
+                        )
+                        if built is not None:
+                            pending_presentation = built
+                        diagnosis_text = build_diagnosis_answer(
+                            user_text, troubleshoot_data
+                        )
+                        if should_finish_diagnosis_without_llm(
+                            user_text, troubleshoot_data
+                        ):
+                            progress(
+                                "Summarizing from Docker inspect and logs…"
+                            )
+                            messages.append(
+                                ChatMessage(
+                                    role="assistant", content=diagnosis_text
+                                )
+                            )
+                            return _finish(
+                                diagnosis_text,
+                                turn,
+                                presentation=pending_presentation,
+                            )
+                        pending_diagnosis_prefix = diagnosis_text
+                        progress(
+                            "Log signals ready — asking the model to summarize…"
+                        )
+                        continue
+                progress("Diagnosis requires troubleshoot_container_logs — retrying…")
+                messages.append(
+                    ChatMessage(role="user", content=_NUDGE_DIAGNOSIS)
+                )
                 continue
 
             # Skip summarization LLM for simple list/logs/search/inspect.
