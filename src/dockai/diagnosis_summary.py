@@ -14,6 +14,11 @@ _SHUTDOWN_RE = re.compile(
     r"administrator command|terminating background worker",
     re.IGNORECASE,
 )
+_LOG_MSG_RE = re.compile(r'msg="([^"]+)"', re.IGNORECASE)
+_FAILED_CONNECT_HOST_RE = re.compile(
+    r"failed to connect to\s+`([^`]+)`",
+    re.IGNORECASE,
+)
 
 
 def user_asks_restart_or_crash_loop(user_text: str) -> bool:
@@ -109,6 +114,69 @@ def _log_lines_look_historical_shutdown(highlights: list[dict[str, Any]]) -> boo
     return False
 
 
+def extract_plain_language_findings(analysis: dict[str, Any]) -> list[str]:
+    """
+    Short, user-facing lines distilled from log highlights (deduped).
+    """
+    highlights = analysis.get("highlight_lines") or []
+    findings: list[str] = []
+    seen: set[str] = set()
+
+    for item in highlights:
+        text = (item.get("text") or "").strip()
+        if not text:
+            continue
+        lower = text.lower()
+        candidate: str | None = None
+
+        msg_match = _LOG_MSG_RE.search(text)
+        if msg_match:
+            candidate = msg_match.group(1).strip()
+        elif _FAILED_CONNECT_HOST_RE.search(text):
+            candidate = _FAILED_CONNECT_HOST_RE.search(text).group(0).strip()
+
+        if candidate is None and "fatal" in lower:
+            candidate = text.split("level=fatal", 1)[-1].strip() if "level=fatal" in lower else text
+            if len(candidate) > 220:
+                candidate = candidate[:217] + "…"
+
+        if candidate is None:
+            if "connection refused" in lower:
+                candidate = "A connection was refused — the target host/port is not accepting connections."
+            elif "network is unreachable" in lower:
+                candidate = "A network connection failed (network is unreachable)."
+            elif "permission denied" in lower:
+                candidate = "Permission denied in the logs."
+            elif "panic:" in lower:
+                candidate = text[text.lower().find("panic:") :].strip()[:200]
+
+        if not candidate:
+            continue
+        key = candidate.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        findings.append(candidate)
+        if len(findings) >= 3:
+            break
+
+    return findings
+
+
+def has_plain_language_findings(analysis: dict[str, Any]) -> bool:
+    return bool(extract_plain_language_findings(analysis))
+
+
+def format_plain_language_section(analysis: dict[str, Any]) -> str:
+    findings = extract_plain_language_findings(analysis)
+    if not findings:
+        return ""
+    lines = ["What the logs say (plain language):"]
+    for finding in findings:
+        lines.append(f"- {finding}")
+    return "\n".join(lines)
+
+
 def summarize_log_issues(
     analysis: dict[str, Any],
     *,
@@ -156,8 +224,15 @@ def summarize_log_issues(
             specifics.append(
                 "Worker shutdown / administrator command lines (often from stop or restart)."
             )
-        if "connection refused" in lower or "connection reset" in lower:
-            specifics.append("Connection refused/reset — check upstream host/port.")
+        if (
+            "connection refused" in lower
+            or "connection reset" in lower
+            or "network is unreachable" in lower
+            or "failed to connect" in lower
+        ):
+            specifics.append(
+                "Database or service connection failures — check host/port in config."
+            )
         if "permission denied" in lower:
             specifics.append("Permission denied — file or socket permissions.")
 
@@ -203,13 +278,50 @@ def build_diagnosis_answer(user_text: str, troubleshoot_data: dict[str, Any]) ->
         )
 
     blocks.append(summarize_log_issues(analysis, inspect=inspect))
+    plain = format_plain_language_section(analysis)
+    if plain:
+        blocks.append(plain)
+    likely = _likely_cause_from_findings(analysis, inspect=inspect)
+    if likely:
+        blocks.append(likely)
     return "\n".join(blocks)
+
+
+def _likely_cause_from_findings(
+    analysis: dict[str, Any],
+    *,
+    inspect: dict[str, Any],
+) -> str:
+    """One-line hypothesis grounded in repeated log text (not generic Docker advice)."""
+    joined = " ".join(extract_plain_language_findings(analysis)).lower()
+    if not joined:
+        return ""
+    if "host.docker.internal" in joined and (
+        "failed to connect" in joined or "network is unreachable" in joined
+    ):
+        name = inspect.get("name") or "This container"
+        return (
+            f"Likely cause: {name} is pointed at Postgres on the host "
+            "(`host.docker.internal`), but nothing is reachable there from this "
+            "container — use your Compose DB service (e.g. `db`) on the internal network."
+        )
+    if inspect.get("oom_killed"):
+        return "Likely cause: the container was killed for memory (OOM)."
+    if "connection refused" in joined:
+        return (
+            "Likely cause: the app cannot reach the database or upstream service "
+            "at the configured host/port."
+        )
+    return ""
 
 
 def should_finish_diagnosis_without_llm(
     user_text: str, troubleshoot_data: dict[str, Any]
 ) -> bool:
-    """Skip the summarization LLM when inspect already contradicts the user's premise."""
+    """Skip the summarization LLM when facts + log wording are enough."""
+    analysis = troubleshoot_data.get("analysis")
+    if isinstance(analysis, dict) and has_plain_language_findings(analysis):
+        return True
     if not user_asks_restart_or_crash_loop(user_text):
         return False
     inspect = troubleshoot_data.get("inspect")

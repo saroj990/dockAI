@@ -145,6 +145,41 @@ def print_info(message: str) -> None:
     console.print(message)
 
 
+def print_compose_status(
+    *,
+    compose_file: str,
+    project_name: str,
+    running_count: int,
+    total_count: int,
+    rows: list[dict[str, str]],
+) -> None:
+    """Summary table for `dockai compose` / `dockai .`."""
+    console.print(
+        f"[bold]Compose project[/bold] `{project_name}` — "
+        f"{compose_file}"
+    )
+    console.print(
+        f"[bold]{running_count}/{total_count}[/bold] services running"
+    )
+    if not rows:
+        return
+    table = Table(title="Services")
+    table.add_column("Service")
+    table.add_column("State")
+    table.add_column("Container")
+    table.add_column("Status")
+    for row in rows:
+        state = row["state"]
+        style = "green" if state == "running" else "yellow"
+        table.add_row(
+            row["service"],
+            f"[{style}]{state}[/{style}]",
+            row.get("container") or "—",
+            row.get("status") or "—",
+        )
+    console.print(table)
+
+
 def append_elapsed_to_status_message(message: str, elapsed_seconds: float) -> str:
     """Append wall time for spinner text, reusing footer formatting rules."""
     plain = _RICH_TAG_RE.sub("", message).strip()

@@ -82,7 +82,25 @@ def test_fact_lead_actual_restart_loop():
     answer = build_diagnosis_answer("why is api restarting", data)
     assert "restart problem" in answer.lower()
     assert is_active_restart_loop(data["inspect"])
-    assert not should_finish_diagnosis_without_llm("why is api restarting", data)
+    assert should_finish_diagnosis_without_llm("why is api restarting", data)
+
+
+def test_plain_language_pg_tileserv_database_fatal():
+    log_line = (
+        'time="2026-11-05T13:42:02Z" level=fatal msg="failed to connect to '
+        "`host=host.docker.internal user=postgres database=gisdb`: dial error "
+        '(dial tcp :5432: connect: network is unreachable)"'
+    )
+    data = _troubleshoot_payload(
+        restarting=True,
+        status="restarting",
+        logs=log_line + "\n" + log_line,
+    )
+    answer = build_diagnosis_answer("why is pg_tileserv restarting", data)
+    assert "What the logs say" in answer
+    assert "failed to connect" in answer
+    assert "host.docker.internal" in answer
+    assert "Likely cause" in answer
 
 
 def test_summarize_log_issues_postgis_and_shutdown():

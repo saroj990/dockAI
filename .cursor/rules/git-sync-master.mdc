@@ -1,0 +1,36 @@
+---
+description: Sync with origin/master before branches, diffs, and PRs
+alwaysApply: true
+---
+
+# Git — sync `master` first
+
+Before any work that depends on how the repo compares to **`master`**, refresh local `master` from the remote. Do this **before** creating a branch, reporting “ahead/behind”, opening a PR, or running `git diff` / `git log` against `master`.
+
+## Required sequence
+
+Run from the repository root (use full permissions if `git fetch` needs network/SSH):
+
+```bash
+git fetch origin master
+git checkout master
+git pull origin master --ff-only
+```
+
+If `pull --ff-only` fails (local `master` diverged), stop and tell the user — do not rebase or reset `master` unless they ask.
+
+Then:
+
+- **New branch:** `git checkout -b <branch-name>` from the updated `master` (or from an explicitly named base they request).
+- **Compare to master:** `git log master..HEAD --oneline` and `git diff master...HEAD --stat` (or `master..HEAD` for merge-base semantics as appropriate).
+- **PR summary:** Base the description on `master...HEAD` **after** the fetch/pull above.
+
+## Do not
+
+- Compare to stale local `master` without fetching first.
+- Create a feature branch without updating `master` when the user asked for work “from master” or “vs master”.
+- Force-push `master` or run destructive git on `master` without explicit user request.
+
+## When fetch fails
+
+If `git fetch` / `pull` fails (auth, network), say so clearly, report **local-only** `master` vs branch state, and ask the user to pull on their machine before trusting “up to date with GitHub”.

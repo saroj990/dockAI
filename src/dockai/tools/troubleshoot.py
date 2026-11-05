@@ -25,7 +25,13 @@ _SIGNAL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("error", re.compile(r"\berror\b", re.IGNORECASE)),
     (
         "connection",
-        re.compile(r"\b(connection refused|connection reset)\b", re.IGNORECASE),
+        re.compile(
+            r"\b("
+            r"connection refused|connection reset|network is unreachable|"
+            r"failed to connect|dial error|dial tcp"
+            r")\b",
+            re.IGNORECASE,
+        ),
     ),
     ("permission", re.compile(r"\bpermission denied\b", re.IGNORECASE)),
     ("exit_code", re.compile(r"\bexit code\b", re.IGNORECASE)),

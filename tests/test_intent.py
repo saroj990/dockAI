@@ -103,6 +103,11 @@ def test_intent_logs_phrases(phrase: str, tool: str, target: str, tail: int | No
             "pg tileserv",
         ),
         ("my pg tileserv is restarting", "pg tileserv"),
+        ("why is my pg tile serv is restarting", "pg tile serv"),
+        ("why pg_tileserv is restarting", "pg_tileserv"),
+        ("why is my pg_tileserv is restarting", "pg_tileserv"),
+        ("what is wrong with the pg tileserv", "pg tileserv"),
+        ("why issue with pg tileserv", "pg tileserv"),
     ],
 )
 def test_intent_diagnose_restart_phrases(phrase: str, target: str):

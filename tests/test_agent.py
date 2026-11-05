@@ -312,4 +312,5 @@ def test_agent_troubleshoot_tool_then_llm_summary():
     assert result.presentation is not None
     assert result.presentation["kind"] == "troubleshoot_logs"
     assert "OOM" in result.answer or "restarting" in result.answer.lower()
-    assert len(llm.calls) == 2
+    assert "What the logs say" in result.answer or "panic" in result.answer.lower()
+    assert len(llm.calls) == 1

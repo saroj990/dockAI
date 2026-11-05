@@ -131,10 +131,22 @@ _UPTIME = re.compile(
 )
 
 # Matched on normalize_diagnose_text output (canonical short form).
+_DIAG_NAME_BEFORE_IS_RESTART = (
+    r"(?=[a-z0-9][\w.-]*(?:\s+[a-z0-9][\w.-]*)*\s+(?:is|are)\s+"
+    r"(?:(?:keep(?:s|ing)?|constantly|always)\s+)?"
+    r"(?:restart(?:ing|s|ed)?|crash(?:ing|es|ed)?))"
+)
 _DIAG_RESTART_NAMED = re.compile(
-    r"^(?:(?:why|how\s+come)\s+(?:is|are|does|do)|is|are)\s+"
+    r"^(?:"
+    r"(?:why|how\s+come)\s+"
+    r"(?:(?:is|are|does|do)\s+|"
+    + _DIAG_NAME_BEFORE_IS_RESTART
+    + r")"
     r"(?:(?:my|the|our|this|that)\s+)?"
+    r"|(?:is|are)\s+(?:(?:my|the|our|this|that)\s+)?"
+    r")"
     r"(.+?)\s+"
+    r"(?:(?:is|are)\s+)?"
     r"(?:(?:keep(?:s|ing)?|constantly|always)\s+)?"
     r"(?:restart(?:ing|s|ed)?|crash(?:ing|es|ed)?)$",
     re.IGNORECASE,
@@ -175,6 +187,18 @@ _SUBJECT_HAS_ISSUES = re.compile(
     r"^(?:(?:my|the|our|this|that)\s+)?(.+?)\s+(?:is|are)\s+"
     r"(?:showing|having|getting|seeing)\s+(?:some\s+)?"
     r"(?:issue|issues|problem|problems|error|errors|trouble)$",
+    re.IGNORECASE,
+)
+_WRONG_WITH_NAMED = re.compile(
+    r"^(?:what\s+(?:is|'s)\s+)?"
+    r"(?:wrong|not\s+working|broken|failing)\s+with\s+"
+    r"(?:(?:the|my|our|this|that|a|an)\s+)?(.+)$",
+    re.IGNORECASE,
+)
+_ISSUE_WITH_NAMED = re.compile(
+    r"^(?:why\s+(?:is\s+there\s+)?)?(?:an?\s+)?"
+    r"(?:issue|problem|trouble)\s+with\s+"
+    r"(?:(?:the|my|our|this|that|a|an)\s+)?(.+)$",
     re.IGNORECASE,
 )
 
@@ -233,23 +257,47 @@ def _strip_intent_fluff(text: str, *, include_diagnose_leads: bool) -> str:
     return text
 
 
+def _collapse_redundant_is_before_restart(text: str) -> str:
+    """Fix doubled copulas: 'why is my foo is restarting' → 'why is my foo restarting'."""
+    if len(re.findall(r"\b(?:is|are)\b", text, re.IGNORECASE)) < 2:
+        return text
+    return re.sub(
+        r"(\s)(?:is|are)\s+(?=(?:(?:keep(?:s|ing)?|constantly|always)\s+)?"
+        r"(?:restart(?:ing|s|ed)?|crash(?:ing|es|ed)?)\s*$)",
+        r"\1",
+        text,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+
+
 def normalize_diagnose_text(user_text: str) -> str:
     """Canonical form for restart/crash diagnosis intent matching."""
     base = normalize_user_text(user_text)
     text = _strip_intent_fluff(base, include_diagnose_leads=True)
     text = _CONTAINER_WRAPPER.sub(" ", text)
     text = " ".join(text.split())
-    flipped = _SUBJECT_IS_RESTART.fullmatch(text)
-    if flipped:
-        target = _clean_target(flipped.group(1))
-        verb = flipped.group(2).lower()
-        text = f"is {target} {verb}"
-    else:
-        keeps = _SUBJECT_KEEPS_RESTART.fullmatch(text)
-        if keeps:
-            target = _clean_target(keeps.group(1))
-            verb = keeps.group(2).lower()
+    text = _collapse_redundant_is_before_restart(text)
+    for pattern in (_WRONG_WITH_NAMED, _ISSUE_WITH_NAMED):
+        wrong = pattern.fullmatch(text)
+        if wrong:
+            target = _clean_target(wrong.group(1))
+            if target:
+                text = f"why {target} showing issues"
+            break
+    # Do not flip 'why NAME is restarting' into 'is why NAME restarting'.
+    if not re.match(r"^(?:why|how\s+come)\b", text, re.IGNORECASE):
+        flipped = _SUBJECT_IS_RESTART.fullmatch(text)
+        if flipped:
+            target = _clean_target(flipped.group(1))
+            verb = flipped.group(2).lower()
             text = f"is {target} {verb}"
+        else:
+            keeps = _SUBJECT_KEEPS_RESTART.fullmatch(text)
+            if keeps:
+                target = _clean_target(keeps.group(1))
+                verb = keeps.group(2).lower()
+                text = f"is {target} {verb}"
     issues = _SUBJECT_HAS_ISSUES.fullmatch(text)
     if issues:
         target = _clean_target(issues.group(1))
@@ -540,7 +588,7 @@ def _try_diagnose_restart_intent(
     *,
     focus_container: str | None,
 ) -> IntentMatch | None:
-    """Named restart/crash asks → troubleshoot_container_logs (skip LLM routing)."""
+    """Named restart/crash/issue asks → troubleshoot_container_logs (skip LLM)."""
     target = extract_diagnose_container_target(
         user_text, focus_container=focus_container
     )

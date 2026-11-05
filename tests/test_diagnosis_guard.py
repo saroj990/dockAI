@@ -90,6 +90,48 @@ def test_hallucinated_diagnosis_does_not_return_fake_story():
     assert len(llm.calls) == 0
 
 
+def test_diagnosis_list_misroute_runs_troubleshoot():
+    """Model lists containers on a diagnosis ask — agent still gathers logs."""
+    container = make_container(
+        name="pg_tileserv",
+        status="restarting",
+        restarting=True,
+        logs=b"FATAL: database connection failed\n",
+    )
+    client = MagicMock()
+    client.containers.list.return_value = [container]
+    llm = ScriptedLLM(
+        [
+            ChatMessage(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="1",
+                        name="list_containers",
+                        arguments={"all_containers": True},
+                    )
+                ],
+            ),
+            ChatMessage(
+                role="assistant",
+                content="Logs show a database connection failure.",
+            ),
+        ]
+    )
+    result = run_agent(
+        "what is wrong with the pg tileserv",
+        llm=llm,
+        client=client,
+    )
+    assert any(
+        t["tool"] == "troubleshoot_container_logs" and t["result"].get("ok")
+        for t in result.tool_results
+    )
+    assert "Showing 3 container" not in result.answer
+    assert "database connection" in result.answer.lower() or "Docker inspect" in result.answer
+
+
 def test_diagnosis_with_real_troubleshoot_summarizes():
     container = make_container(
         name="pg_tileserv",

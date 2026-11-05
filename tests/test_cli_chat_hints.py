@@ -34,6 +34,8 @@ def test_chat_shows_hints_by_default():
         patch("dockai.cli._prepare_ollama_settings", side_effect=fake_prepare),
         patch("dockai.cli.get_client", return_value=MagicMock()),
         patch("dockai.cli.OllamaProvider") as provider_cls,
+        patch("dockai.cli.typer.confirm", return_value=True),
+        patch("dockai.cli.ChatSession"),
     ):
         provider_cls.return_value.close = MagicMock()
         result = CliRunner().invoke(app, ["chat"], input="exit\n")
@@ -54,6 +56,8 @@ def test_chat_hints_disabled():
         patch("dockai.cli._prepare_ollama_settings", side_effect=fake_prepare),
         patch("dockai.cli.get_client", return_value=MagicMock()),
         patch("dockai.cli.OllamaProvider") as provider_cls,
+        patch("dockai.cli.typer.confirm", return_value=True),
+        patch("dockai.cli.ChatSession"),
     ):
         provider_cls.return_value.close = MagicMock()
         result = CliRunner().invoke(app, ["chat"], input="exit\n")
